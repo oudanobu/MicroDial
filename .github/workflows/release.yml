@@ -59,6 +59,11 @@ jobs:
           echo "android.enableJetifier=true" >> gradle.properties
           echo "org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m" >> gradle.properties
 
+      - name: Fix Kotlin Duplicate Classes (Dependency Resolution)
+        run: |
+          cd android/app
+          echo -e "\nconfigurations.all { resolutionStrategy { eachDependency { details -> if (details.requested.group == 'org.jetbrains.kotlin' && (details.requested.name == 'kotlin-stdlib-jdk8' || details.requested.name == 'kotlin-stdlib-jdk7')) { details.useTarget 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22' } } } }" >> build.gradle
+
       - name: Package 32-bit APK
         run: |
           mkdir -p release-apk
