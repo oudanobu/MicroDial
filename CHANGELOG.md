@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-06-12
+
+### Added
+- **Chinese Native Localization**: Embedded robust Simplified Chinese (简体中文) localization options across both the React device simulator and Android compiler layout resources.
+- **Improved CI/CD Auto-releasing**: Modified GitHub Actions release triggering to automatically create or update GitHub Releases when code is pushed to standard main/master branches or triggered manually, instead of just requiring manual tags.
+
+### Fixed
+- **Kotlin Class Duplications**: Addressed Gradle 8.4 `:app:checkReleaseDuplicateClasses` errors by defining high-priority dependency resolution overrides, forcing legacy `kotlin-stdlib-jdk7`/`jdk8` references to unify smoothly under modern `kotlin-stdlib`.
+- **Cargo-NDK CLI Compiler Panics**: Resolved `cargo-ndk` CLI flag parser panic on target index evaluations (`unknown package: 23`) by passing API compatibility versions safely through `NDK_PLATFORM` environment definitions.
+- **AndroidX & Jetifier Bridge Errors**: Integrated `android.useAndroidX=true` and `android.enableJetifier=true` properties in `gradle.properties` to cleanly manage support wrapper libraries for wear devices running Android 6.0.
+
 ## [1.0.0] - 2026-06-12
 
 ### Added
