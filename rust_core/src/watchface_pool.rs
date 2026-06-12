@@ -1,7 +1,7 @@
 // src/watchface_pool.rs
 // 极致优化：单实例按需加载表盘驱动
 
-use crate::geometry::{ScreenGeometry, AdaptiveRenderer};
+use crate::geometry::ScreenGeometry;
 
 /// 24款默认表盘与自定义表盘的静态ID索引（仅占1字节）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,11 +82,6 @@ impl SingleFaceEngine {
                 } else {
                     frame_buffer[..total_pixels].fill(0x0000); // 兜底黑色，绝不崩溃
                 }
-            }
-            
-            _ => {
-                // For undefined active faces 3 to 22 (temporarily skipped for brevity), just fall back
-                frame_buffer[..total_pixels].fill(0x0000);
             }
         }
 
