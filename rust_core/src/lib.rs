@@ -29,7 +29,7 @@ pub extern "system" fn Java_com_oudanobu_chronoxide_MainActivity_setRustScreenGe
         geometry::ScreenShape::Square
     };
     
-    let geo = geometry::ScreenGeometry {
+    let _geo = geometry::ScreenGeometry {
         width: width as u16,
         height: height as u16,
         shape,
@@ -39,5 +39,5 @@ pub extern "system" fn Java_com_oudanobu_chronoxide_MainActivity_setRustScreenGe
     // Real hardware would store this in a static matrix block
     // We log it safely within mock print
     #[cfg(debug_assertions)]
-    println!("Rust Core updated Screen Geometry: {:?}", geo);
+    println!("Rust Core updated Screen Geometry: {:?}", _geo);
 }

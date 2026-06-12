@@ -82,7 +82,7 @@ impl AdaptiveRenderer {
         }
 
         // 获取当前滑动视口分界点
-        let (face_x_start, drawer_x_start) = Self::calculate_drawer_viewport(geo, touch);
+        let (_face_x_start, drawer_x_start) = Self::calculate_drawer_viewport(geo, touch);
 
         for y in 0..geo.height {
             for x in 0..geo.width {
