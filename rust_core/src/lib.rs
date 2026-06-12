@@ -103,7 +103,7 @@ pub unsafe extern "system" fn Java_com_oudanobu_chronoxide_LauncherEngine_native
 
 #[no_mangle]
 pub unsafe extern "system" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeRenderFrame(
-    mut env: JNIEnv,
+    env: JNIEnv,
     _class: JClass,
     j_frame_buffer: JShortArray,
     width: jint,
