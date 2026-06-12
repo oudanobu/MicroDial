@@ -101,7 +101,10 @@ impl WatchFacePicker {
                             1 => frame_buffer[pixel_index] = 0x001F, // 1号：传统指针（用蓝色标识卡片）
                             2 => frame_buffer[pixel_index] = 0xF800, // 2号：罗马数字（用红色标识卡片）
                             3 => frame_buffer[pixel_index] = 0x07E0, // 3号：运动表盘（用绿色标识卡片）
-                            4..=23 => frame_buffer[pixel_index] = 0x7BEF, // 4-23号：通用置灰静态骨架
+                            4 => frame_buffer[pixel_index] = 0xCEE0, // 4号：Prussian 机械（古铜色）
+                            5 => frame_buffer[pixel_index] = 0x3CA2, // 5号：Aki-Cyber 终端（青绿橄榄色）
+                            6 => frame_buffer[pixel_index] = 0xFD20, // 6号：明代浑天星象图（纯金色）
+                            7..=23 => frame_buffer[pixel_index] = 0x7BEF, // 7-23号：通用置灰静态骨架
                             24 => {
                                 // 24号：自定义图片表盘卡片
                                 if !custom_img_ptr.is_null() {

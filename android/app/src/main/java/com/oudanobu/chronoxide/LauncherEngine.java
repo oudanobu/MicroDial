@@ -26,8 +26,17 @@ public class LauncherEngine extends View implements SensorEventListener {
     private int width;
     private int height;
 
-    private ByteBuffer aiImageBuffer;
-    private int aiImageSize = 0;
+    private ByteBuffer aiRomanBuffer;
+    private int aiRomanSize = 0;
+
+    private ByteBuffer aiPrussianBuffer;
+    private int aiPrussianSize = 0;
+
+    private ByteBuffer aiAkiCyberBuffer;
+    private int aiAkiCyberSize = 0;
+
+    private ByteBuffer aiMingAstrolabeBuffer;
+    private int aiMingAstrolabeSize = 0;
 
     // --- 时间复用优化 ---
     private Calendar globalCalendar = Calendar.getInstance();
@@ -53,7 +62,7 @@ public class LauncherEngine extends View implements SensorEventListener {
         this.screenBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565);
 
         // 初始化自定义图像资产
-        loadImageAsset(context);
+        loadMultiAssets(context);
 
         // 初始化传感器管道
         sensorManager = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
@@ -65,17 +74,33 @@ public class LauncherEngine extends View implements SensorEventListener {
         }
     }
 
-    private void loadImageAsset(Context context) {
+    private void loadMultiAssets(Context context) {
+        aiRomanBuffer = loadBufferFromAsset(context, "ai_roman_dial.png");
+        aiRomanSize = aiRomanBuffer != null ? aiRomanBuffer.capacity() : 0;
+
+        aiPrussianBuffer = loadBufferFromAsset(context, "ai_prussian_dial.png");
+        aiPrussianSize = aiPrussianBuffer != null ? aiPrussianBuffer.capacity() : 0;
+
+        aiAkiCyberBuffer = loadBufferFromAsset(context, "ai_akicyber_dial.png");
+        aiAkiCyberSize = aiAkiCyberBuffer != null ? aiAkiCyberBuffer.capacity() : 0;
+
+        aiMingAstrolabeBuffer = loadBufferFromAsset(context, "ai_ming_astrolabe.png");
+        aiMingAstrolabeSize = aiMingAstrolabeBuffer != null ? aiMingAstrolabeBuffer.capacity() : 0;
+    }
+
+    private ByteBuffer loadBufferFromAsset(Context context, String assetName) {
         try {
-            InputStream is = context.getAssets().open("ai_roman_dial.png");
+            InputStream is = context.getAssets().open(assetName);
             Bitmap srcBitmap = BitmapFactory.decodeStream(is);
             Bitmap rgb565Bitmap = srcBitmap.copy(Bitmap.Config.RGB_565, false);
-            aiImageSize = rgb565Bitmap.getByteCount();
-            aiImageBuffer = ByteBuffer.allocateDirect(aiImageSize);
-            aiImageBuffer.order(ByteOrder.nativeOrder());
-            rgb565Bitmap.copyPixelsToBuffer(aiImageBuffer);
+            int size = rgb565Bitmap.getByteCount();
+            ByteBuffer buffer = ByteBuffer.allocateDirect(size);
+            buffer.order(ByteOrder.nativeOrder());
+            rgb565Bitmap.copyPixelsToBuffer(buffer);
+            return buffer;
         } catch (Exception e) {
             e.printStackTrace();
+            return null;
         }
     }
 
@@ -99,10 +124,33 @@ public class LauncherEngine extends View implements SensorEventListener {
         int minute = globalCalendar.get(Calendar.MINUTE);
         int second = globalCalendar.get(Calendar.SECOND);
 
+        int selectedFaceId = nativeGetSelectedFaceId();
+        ByteBuffer activeBuffer = null;
+        int activeSize = 0;
+        switch (selectedFaceId) {
+            case 1:
+            case 24:
+                activeBuffer = aiRomanBuffer;
+                activeSize = aiRomanSize;
+                break;
+            case 4:
+                activeBuffer = aiPrussianBuffer;
+                activeSize = aiPrussianSize;
+                break;
+            case 5:
+                activeBuffer = aiAkiCyberBuffer;
+                activeSize = aiAkiCyberSize;
+                break;
+            case 6:
+                activeBuffer = aiMingAstrolabeBuffer;
+                activeSize = aiMingAstrolabeSize;
+                break;
+        }
+
         // 3. 将手势、时间、FPS与传感器状态全量打包泵入 Rust (保留 ByteBuffer 确保图片自定义管线可用)
         nativeUpdateEngineStateWithBuffer(isDragging, dragOffsetX, width, height, isRound, 
                                           hour, minute, second, currentFps, liveSteps, liveHeartRate,
-                                          aiImageBuffer, aiImageSize);
+                                          activeBuffer, activeSize);
         
         // 4. 渲染并冲刷显存
         nativeRenderFrame(frameBuffer, width, height, isRound);
@@ -131,11 +179,34 @@ public class LauncherEngine extends View implements SensorEventListener {
                 isDragging = false;
                 dragOffsetX = (int) (currentX - startX);
                 
+                int selectedFaceId = nativeGetSelectedFaceId();
+                ByteBuffer activeBuffer = null;
+                int activeSize = 0;
+                switch (selectedFaceId) {
+                    case 1:
+                    case 24:
+                        activeBuffer = aiRomanBuffer;
+                        activeSize = aiRomanSize;
+                        break;
+                    case 4:
+                        activeBuffer = aiPrussianBuffer;
+                        activeSize = aiPrussianSize;
+                        break;
+                    case 5:
+                        activeBuffer = aiAkiCyberBuffer;
+                        activeSize = aiAkiCyberSize;
+                        break;
+                    case 6:
+                        activeBuffer = aiMingAstrolabeBuffer;
+                        activeSize = aiMingAstrolabeSize;
+                        break;
+                }
+
                 globalCalendar.setTimeInMillis(System.currentTimeMillis());
                 nativeUpdateEngineStateWithBuffer(false, dragOffsetX, width, height, false, 
                         globalCalendar.get(Calendar.HOUR_OF_DAY), globalCalendar.get(Calendar.MINUTE), 
                         globalCalendar.get(Calendar.SECOND), currentFps, liveSteps, liveHeartRate,
-                        aiImageBuffer, aiImageSize);
+                        activeBuffer, activeSize);
 
                 if (Math.abs(dragOffsetX) < 10 && nativeGetSystemState() == 1) {
                     nativeOnCardClicked(calculateClickedCard(currentX));
@@ -169,6 +240,7 @@ public class LauncherEngine extends View implements SensorEventListener {
     private native void nativeRenderFrame(short[] buffer, int width, int height, boolean isRound);
     private native void nativeOnCardClicked(int clickedId);
     private native int nativeGetSystemState();
+    private native int nativeGetSelectedFaceId();
 
     static {
         System.loadLibrary("chronoxide");

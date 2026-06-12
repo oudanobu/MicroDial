@@ -237,6 +237,16 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeGetSy
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeGetSelectedFaceId(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    if let Ok(engine) = ENGINE.lock() {
+        engine.picker.selected_face_id as jint
+    } else { 1 }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeRenderFrame(
     env: JNIEnv,
     _class: JClass,
@@ -375,6 +385,99 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeRende
                                 frame_buffer[(y * geo.width as u32 + x as u32) as usize] = 0x07E0;
                             }
                         }
+                    }
+                    4 => {
+                        // 4. Prussian Mechanical Core: 直刷 Prussian 资产，叠加高精度数字化时间。
+                        if !engine.custom_image_address.is_null() {
+                            let total_pixels = (geo.width as u32 * geo.height as u32) as usize;
+                            if engine.custom_image_size as usize >= total_pixels * 2 {
+                                let src_slice = std::slice::from_raw_parts(engine.custom_image_address as *const u16, total_pixels);
+                                frame_buffer[..total_pixels].copy_from_slice(src_slice);
+                            }
+                        } else {
+                            frame_buffer.fill(0x3186); // 古典深灰底色fallback
+                        }
+
+                        let center_x = geo.width / 2;
+                        let center_y = geo.height / 2;
+                        let digit_scale = 6; 
+                        let base_y = center_y - 15;
+                        
+                        draw_digit(frame_buffer, &geo, h_high, center_x - 55, base_y, digit_scale, 0xFFFF);
+                        draw_digit(frame_buffer, &geo, h_low, center_x - 27, base_y, digit_scale, 0xFFFF);
+                        
+                        if engine.second % 2 == 0 {
+                            for py in (center_y-8)..(center_y-4) {
+                                for px in (center_x-1)..(center_x+1) {
+                                    if let Some(pixel) = frame_buffer.get_mut((py as u32 * geo.width as u32 + px as u32) as usize) {
+                                        *pixel = 0xFFFF;
+                                    }
+                                }
+                            }
+                            for py in (center_y+4)..(center_y+8) {
+                                for px in (center_x-1)..(center_x+1) {
+                                    if let Some(pixel) = frame_buffer.get_mut((py as u32 * geo.width as u32 + px as u32) as usize) {
+                                        *pixel = 0xFFFF;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        draw_digit(frame_buffer, &geo, m_high, center_x + 13, base_y, digit_scale, 0xFFFF);
+                        draw_digit(frame_buffer, &geo, m_low, center_x + 41, base_y, digit_scale, 0xFFFF);
+                    }
+                    5 => {
+                        // 5. Aki-Cyber Terminal 1988: 直刷 Aki-Cyber 资产，叠加高能核心诊断台。
+                        if !engine.custom_image_address.is_null() {
+                            let total_pixels = (geo.width as u32 * geo.height as u32) as usize;
+                            if engine.custom_image_size as usize >= total_pixels * 2 {
+                                let src_slice = std::slice::from_raw_parts(engine.custom_image_address as *const u16, total_pixels);
+                                frame_buffer[..total_pixels].copy_from_slice(src_slice);
+                            }
+                        } else {
+                            frame_buffer.fill(0x3B44); // 橄榄绿fallback
+                        }
+
+                        let text_color = 0x07E0;   // 霓虹绿
+                        let accent_color = 0xFED0; // 暗琥珀黄
+                        let start_x = geo.width / 2 - 50;
+                        let start_y = geo.height / 2 - 40;
+                        let scale = 2;
+
+                        draw_string(frame_buffer, &geo, "NET: ONLINE", start_x, start_y, scale, text_color);
+                        
+                        draw_string(frame_buffer, &geo, "FPS:", start_x, start_y + 25, scale, text_color);
+                        let fps_val_str = engine.fps.to_string();
+                        draw_string(frame_buffer, &geo, &fps_val_str, start_x + 40, start_y + 25, scale, text_color);
+
+                        draw_string(frame_buffer, &geo, "SLAB: 64MB", start_x, start_y + 50, scale, accent_color);
+                        draw_string(frame_buffer, &geo, "CORE: STABLE", start_x, start_y + 75, scale, text_color);
+                    }
+                    6 => {
+                        // 6. Ming Celestial Astrolabe: 直刷明代星象 astrolabe 资产，驱动传感器管道。
+                        if !engine.custom_image_address.is_null() {
+                            let total_pixels = (geo.width as u32 * geo.height as u32) as usize;
+                            if engine.custom_image_size as usize >= total_pixels * 2 {
+                                let src_slice = std::slice::from_raw_parts(engine.custom_image_address as *const u16, total_pixels);
+                                frame_buffer[..total_pixels].copy_from_slice(src_slice);
+                            }
+                        } else {
+                            frame_buffer.fill(0x2805); // 帝王紫底色fallback
+                        }
+
+                        let gold_color = 0xFD20; // 鎏金色
+                        let text_color = 0xFFFF; // 羊脂白
+                        let start_x = geo.width / 2 - 40;
+                        let start_y = geo.height / 2 - 30;
+                        let scale = 2;
+
+                        draw_string(frame_buffer, &geo, "STEPS", start_x, start_y, scale, gold_color);
+                        let steps_str = engine.steps.to_string();
+                        draw_string(frame_buffer, &geo, &steps_str, start_x, start_y + 20, scale, text_color);
+
+                        draw_string(frame_buffer, &geo, "PEAK HR", start_x, start_y + 45, scale, gold_color);
+                        let hr_str = if engine.heart_rate == 0 { "--".to_string() } else { engine.heart_rate.to_string() };
+                        draw_string(frame_buffer, &geo, &hr_str, start_x, start_y + 65, scale, 0xF940);
                     }
                     24 => {
                         // 24号：自定义图片物理显存直刷！
