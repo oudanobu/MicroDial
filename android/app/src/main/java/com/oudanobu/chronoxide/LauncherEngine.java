@@ -74,18 +74,23 @@ public class LauncherEngine extends View {
                 
             case MotionEvent.ACTION_UP:
                 isDragging = false;
-                // 检测点击事件：如果在选择器（Picker）状态下，点击直接委托给 Rust 算
+                // 检测点击事件：如果在选择器（Picker）状态下，计算点击了哪个卡片
                 if (Math.abs(dragOffsetX) < 10) {
                     int state = nativeGetSystemState();
                     if (state == 1) { // 1 代表 SystemState::Picker
-                        // 将原始 X、Y 传入 Rust，由 Rust 精确定位选定卡片 ID，降低状态不一致几率
-                        nativeOnCardClicked(event.getX(), event.getY());
+                        int clickedCardId = calculateClickedCard(event.getX());
+                        nativeOnCardClicked(clickedCardId);
                     }
                 }
                 dragOffsetX = 0;
                 break;
         }
         return true;
+    }
+
+    private int calculateClickedCard(float x) {
+        // 简单计算卡片 ID
+        return (int) (x / 160.0f) + 1;
     }
 
     private void shortToByteArray(short[] src, byte[] dest) {
@@ -98,7 +103,7 @@ public class LauncherEngine extends View {
     // --- 声明我们在 Rust 中实现的 JNI 映射 ---
     private native void nativeUpdateEngineState(boolean isDragging, int dragOffsetX, int width, int height, boolean isRound, long imgPtr, int imgSize);
     private native void nativeRenderFrame(short[] buffer, int width, int height, boolean isRound);
-    private native void nativeOnCardClicked(float clickX, float clickY);
+    private native void nativeOnCardClicked(int clickedId);
     private native int nativeGetSystemState();
 
     static {
