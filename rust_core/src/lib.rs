@@ -40,11 +40,13 @@ fn get_char_bits(c: char) -> [u8; 5] {
         'H' => [0b101, 0b101, 0b111, 0b101, 0b101],
         'I' => [0b111, 0b010, 0b010, 0b010, 0b111],
         'J' => [0b001, 0b001, 0b001, 0b101, 0b111],
+        'K' => [0b101, 0b110, 0b100, 0b110, 0b101],
         'L' => [0b100, 0b100, 0b100, 0b100, 0b111], // For SLAB
         'M' => [0b101, 0b111, 0b101, 0b101, 0b101],
         'N' => [0b111, 0b101, 0b101, 0b101, 0b101], // For COUNTER (simplified 3x5)
         'O' => [0b111, 0b101, 0b101, 0b101, 0b111], // For COUNTER
         'P' => [0b111, 0b101, 0b111, 0b100, 0b100],
+        'Q' => [0b111, 0b101, 0b101, 0b110, 0b011],
         'R' => [0b111, 0b101, 0b110, 0b101, 0b101],
         'S' => [0b111, 0b100, 0b111, 0b001, 0b111],
         'T' => [0b111, 0b010, 0b010, 0b010, 0b010],
@@ -53,7 +55,16 @@ fn get_char_bits(c: char) -> [u8; 5] {
         'W' => [0b101, 0b101, 0b101, 0b111, 0b101],
         'X' => [0b101, 0b101, 0b010, 0b101, 0b101],
         'Y' => [0b101, 0b101, 0b010, 0b010, 0b010], // For SYS
+        'Z' => [0b111, 0b001, 0b010, 0b100, 0b111],
         ':' => [0b000, 0b010, 0b000, 0b010, 0b000],
+        '.' => [0b000, 0b000, 0b000, 0b000, 0b010],
+        '>' => [0b100, 0b010, 0b001, 0b010, 0b100],
+        '<' => [0b001, 0b010, 0b100, 0b010, 0b001],
+        '|' => [0b010, 0b010, 0b010, 0b010, 0b010],
+        '(' => [0b010, 0b100, 0b100, 0b100, 0b010],
+        ')' => [0b010, 0b001, 0b001, 0b001, 0b010],
+        '-' => [0b000, 0b000, 0b111, 0b000, 0b000],
+        ' ' => [0b000, 0b000, 0b000, 0b000, 0b000],
         _   => [0b000, 0b000, 0b000, 0b000, 0b000],
     }
 }
@@ -358,36 +369,7 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeRende
             }
             
             GlobalState::AppDrawer => {
-                // =========================================================================
-                // 【Viewport 3：完全体内核应用诊断面板】
-                // =========================================================================
-                frame_buffer.fill(0x10A2); // 极具工业质感的微光黑
-                
-                let text_color = 0x7BEF;   // 银灰色终端文本色
-                let accent_color = 0x07E0; // 高亮绿色
-                let text_scale = 2;        // 2倍放大，适合极小的穿戴屏幕常读
-
-                // 利用栈分配的格式化机制，避开所有堆分配，直接直写文本标签
-                // 条目 1：实时帧率终端
-                draw_string(frame_buffer, &geo, "SYS DIAGNOSTICS", 20, 20, text_scale, 0x07FF);
-                
-                draw_string(frame_buffer, &geo, "SYS FPS:", 20, 60, text_scale, text_color);
-                let fps_str = engine.fps.to_string();
-                draw_string(frame_buffer, &geo, &fps_str, 120, 60, text_scale, accent_color);
-
-                // 条目 2：内存健康监控保护仓
-                draw_string(frame_buffer, &geo, "SLAB RAM: 64M", 20, 100, text_scale, text_color);
-                draw_string(frame_buffer, &geo, "STAT: STABLE", 20, 130, text_scale, 0x07E0);
-
-                // 条目 3：直接 JNI 核心传感器流
-                draw_string(frame_buffer, &geo, "HR :", 20, 180, text_scale, text_color);
-                let mut hr_str = engine.heart_rate.to_string();
-                if engine.heart_rate == 0 { hr_str = "--".to_string(); }
-                draw_string(frame_buffer, &geo, &hr_str, 70, 180, text_scale, 0xF800);
-
-                draw_string(frame_buffer, &geo, "STEP:", 20, 215, text_scale, text_color);
-                let steps_str = engine.steps.to_string();
-                draw_string(frame_buffer, &geo, &steps_str, 70, 215, text_scale, 0xFEE0);
+                render_launcher_shelf(frame_buffer, &geo, &engine);
             }
 
             GlobalState::CompassPanel => {
@@ -782,3 +764,118 @@ fn draw_line_thick(buffer: &mut [u16], w: u32, x0: i32, y0: i32, x1: i32, y1: i3
     }
 }
 
+// =========================================================================
+// 【侧滑综合抽屉渲染引擎：Launcher Shelf System】
+// =========================================================================
+pub fn render_launcher_shelf(frame_buffer: &mut [u16], geo: &ScreenGeometry, engine: &GlobalEngine) {
+    let w = geo.width as u32;
+    let h = geo.height as u32;
+    
+    // 1. 铺设抽屉基底（深邃控制台乌黑 0x0841，带有一点点科幻绿的微弱底色）
+    frame_buffer.fill(0x0841);
+
+    // 2. 绘制顶部遮罩与抽屉标题
+    draw_rect_filled(frame_buffer, w, 0, 0, geo.width as i32, 24, 0x18C3); // 暗绿标题栏
+    // 渲染中文或英文标题：【控制台主菜单 / CONSOLE】
+    draw_string(frame_buffer, geo, "KONG ZHI TAI", 10, 6, 1, 0xFFFF); 
+
+    // 3. 条目一：指南针 & GPS 坐标面板 (Y: 30 ~ 65)
+    draw_item_border(frame_buffer, w, 5, 30, geo.width as i32 - 5, 65, 0x3186);
+    // 模拟中文点阵渲染：[指] 180 DEG | [坐] 40.1N 124.3E
+    let gps_text = format!("ZHI: {:03}D | 40.1N 124.3E", engine.azimuth as i32);
+    draw_string(frame_buffer, geo, &gps_text, 12, 40, 1, 0x07E0); // 荧光绿
+
+    // 4. 条目二：高度计 & 大气压面板 (Y: 70 ~ 105)
+    draw_item_border(frame_buffer, w, 5, 70, geo.width as i32 - 5, 105, 0x3186);
+    // 模拟中文：[高] 150M | [压] 1013HP
+    let env_text = format!("GAO: {}M | {}HP", engine.altitude as i32, engine.pressure as i32);
+    draw_string(frame_buffer, geo, &env_text, 12, 80, 1, 0x07FF); // 冰蓝色
+
+    // 5. 条目三：全平铺式应用列表快捷入口 (Y: 110 ~ 155)
+    draw_item_border(frame_buffer, w, 5, 110, geo.width as i32 - 5, 155, 0x3186);
+    draw_string(frame_buffer, geo, "APP LIST (PING PU)", 12, 115, 1, 0xFFE0);
+    // 在条目内部画三个平铺的小方块图标
+    for i in 0..3 {
+        draw_rect_filled(frame_buffer, w, 20 + (i * 45), 130, 20 + (i * 45) + 30, 150, 0x2104);
+    }
+
+    // 6. 条目四：24号表盘图片提示词仓库入口 (Y: 160 ~ 195)
+    draw_item_border(frame_buffer, w, 5, 160, geo.width as i32 - 15, 195, 0x3186);
+    // 提示词描述器快捷入口
+    draw_string(frame_buffer, geo, "24 BIAO PAN PROMPT", 12, 165, 1, 0xF81F);
+    draw_string(frame_buffer, geo, "> CYBERPUNK CELL-ART", 12, 180, 1, 0x7BEF);
+
+    // 7. 条目五：垂直应用抽屉入口 (Y: 200 ~ 235)
+    draw_item_border(frame_buffer, w, 5, 200, geo.width as i32 - 5, 235, 0x3186);
+    draw_string(frame_buffer, geo, "YING YONG CHOU TI >", 12, 212, 1, 0xFFFF);
+}
+
+// 辅助线框绘制函数
+fn draw_item_border(buffer: &mut [u16], w: u32, x0: i32, y0: i32, x1: i32, y1: i32, color: u16) {
+    for x in x0..x1 {
+        if x >= 0 && x < w as i32 {
+            if y0 >= 0 && (y0 as u32) * w < buffer.len() as u32 { buffer[(y0 as u32 * w + x as u32) as usize] = color; }
+            if y1 >= 0 && (y1 as u32) * w < buffer.len() as u32 { buffer[(y1 as u32 * w + x as u32) as usize] = color; }
+        }
+    }
+    for y in y0..y1 {
+        if y >= 0 && (y as u32) * w < buffer.len() as u32 {
+            if x0 >= 0 && x0 < w as i32 { buffer[(y as u32 * w + x0 as u32) as usize] = color; }
+            if x1 >= 0 && x1 < w as i32 { buffer[(y as u32 * w + x1 as u32) as usize] = color; }
+        }
+    }
+}
+
+fn draw_rect_filled(buffer: &mut [u16], w: u32, x0: i32, y0: i32, x1: i32, y1: i32, color: u16) {
+    for y in y0..y1 {
+        for x in x0..x1 {
+            if x >= 0 && x < w as i32 && y >= 0 && (y as u32) * w < buffer.len() as u32 {
+                buffer[(y as u32 * w + x as u32) as usize] = color;
+            }
+        }
+    }
+}
+
+/// 动态生成 24 号表盘所需的 80-90 年代硬核赛博朋克手绘风图片提示词描述
+pub fn generate_dial_24_prompt(engine: &GlobalEngine) -> String {
+    // 根据当前时间（白昼/深夜）动态调整画面光影
+    let time_context = if engine.hour >= 18 || engine.hour < 6 {
+        "midnight, dark moody atmosphere, flickering neon amber and fluorescent green lights"
+    } else {
+        "dusk, cinematic retro sunlight, heavy shadows, industrial smog"
+    };
+
+    // 根据高度计和气压计动态微调环境细节
+    let environment_context = if engine.altitude > 500.0 {
+        "high-altitude military outpost view, towering megastructures piercing the clouds"
+    } else {
+        "dense subterranean cyber city alley, exposed wiring, concrete walls, dripping water"
+    };
+
+    // 严格限制角色年龄在 25-35 岁之间，融入大友克洋/正宗士郎的硬朗赛博审美
+    format!(
+        "1990s anime style, cell-animation aesthetics, detailed hand-drawn background, \
+         film grain texture, a 28-year-old lone cybernetic operative standing on a tech-platform, \
+         hard sci-fi design, wearing tactical gear. {}, {}. \
+         No modern digital sleekness, retro-futurism tech, highly detailed mechanical elements.",
+        time_context, environment_context
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeGetDial24Prompt<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+) -> jni::sys::jstring {
+    let prompt = if let Ok(engine) = ENGINE.lock() {
+        generate_dial_24_prompt(&engine)
+    } else {
+        "".to_string()
+    };
+    
+    if let Ok(output) = env.new_string(prompt) {
+        output.into_raw()
+    } else {
+        std::ptr::null_mut()
+    }
+}

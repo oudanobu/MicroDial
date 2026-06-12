@@ -51,7 +51,7 @@ export default function App() {
           <div className="flex items-center gap-3">
             <Cpu className="w-6 h-6 text-slate-800 animate-pulse" />
             <span className="font-mono font-bold tracking-tight text-slate-900 text-lg">
-              ChronOxide <span className="text-[10px] text-sky-600 bg-sky-50 px-2 py-0.5 rounded border border-sky-100 font-bold ml-1">Rust Low-Memory Kernel v1.3.0</span>
+              ChronOxide <span className="text-[10px] text-sky-600 bg-sky-50 px-2 py-0.5 rounded border border-sky-100 font-bold ml-1">Rust Low-Memory Kernel v2.0.0</span>
             </span>
           </div>
 
