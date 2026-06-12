@@ -1,4 +1,6 @@
 // src/lib.rs
+#![allow(unused_imports)]
+#![allow(unused_mut)]
 pub mod geometry;
 pub mod picker;
 pub mod watchface_pool;
@@ -6,8 +8,8 @@ pub mod watchface_pool;
 use jni::JNIEnv;
 use jni::objects::{JClass, JShortArray};
 use jni::sys::{jboolean, jint, jlong, jfloat};
-use geometry::{ScreenGeometry, ScreenShape, TouchState, AdaptiveRenderer};
-use picker::{WatchFacePicker, SystemState as PickerState};
+use geometry::{ScreenGeometry, ScreenShape, AdaptiveRenderer};
+use picker::WatchFacePicker;
 use std::sync::Mutex;
 
 // 重新定义清晰的系统全局三段状态
