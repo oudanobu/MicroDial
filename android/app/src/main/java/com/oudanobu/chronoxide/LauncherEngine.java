@@ -6,6 +6,7 @@ import android.graphics.Canvas;
 import android.view.MotionEvent;
 import android.view.View;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 
 public class LauncherEngine extends View {
     private boolean isDragging = false;
@@ -14,7 +15,6 @@ public class LauncherEngine extends View {
     
     // 动态显存与字节流包装零拷贝复用缓冲区
     private short[] frameBuffer;
-    private byte[] byteBufferArray;
     private ByteBuffer reusableByteBuffer;
     private Bitmap screenBitmap;
     private int width;
@@ -25,8 +25,11 @@ public class LauncherEngine extends View {
         this.width = width;
         this.height = height;
         this.frameBuffer = new short[width * height];
-        this.byteBufferArray = new byte[width * height * 2];
-        this.reusableByteBuffer = ByteBuffer.wrap(byteBufferArray);
+        
+        // 优化：直接分配底层原生字节缓冲区，并指定小端字节序（RGB_565 标配）
+        this.reusableByteBuffer = ByteBuffer.allocateDirect(width * height * 2);
+        this.reusableByteBuffer.order(ByteOrder.nativeOrder());
+        
         // 创建直接映射显存的 RGB_565 Bitmap
         this.screenBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565);
     }
@@ -36,52 +39,62 @@ public class LauncherEngine extends View {
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         
-        // 1. 判断是否是圆屏（可以通过系统硬件判断，或为了适配直接先写死 true/false）
+        // 1. 判断是否是圆屏
         boolean isRound = false; 
 
-        // 2. 调用我们在 Rust 中写好的状态机和渲染总控
-        // 传入零拷贝图片指针（这里暂时传 0，等需要自定义表盘时再传 Bitmap 的指针）
+        // 2. 将当前拖拽手势状态高频同步至 Rust 状态机
         nativeUpdateEngineState(isDragging, dragOffsetX, width, height, isRound, 0, 0);
         
         // 3. 让 Rust 直接向我们的 frameBuffer 数组写像素
         nativeRenderFrame(frameBuffer, width, height, isRound);
         
-        // 4. 将短整型像素数流高速写入并且复用 ByteBuffer
-        shortToByteArray(frameBuffer, byteBufferArray);
+        // 4. 【零纯 Java 循环优化】：利用 NIO 将 short 数组秒级注入 ByteBuffer
         reusableByteBuffer.rewind();
-        screenBitmap.copyPixelsFromBuffer(reusableByteBuffer);
+        reusableByteBuffer.asShortBuffer().put(frameBuffer);
         
-        // 5. 直写屏幕 Canvas
+        // 5. 将高效包装好的显存刷入 Bitmap 并直写屏幕 Canvas
+        screenBitmap.copyPixelsFromBuffer(reusableByteBuffer);
         canvas.drawBitmap(screenBitmap, 0, 0, null);
         
-        // 6. 核心：强制触发下一帧重绘（实现 60 帧丝滑刷新）
+        // 6. 核心：强制触发下一帧重绘（实现丝滑刷新）
         invalidate();
     }
 
-    // --- 手势事件捕获：完美驱动左滑抽屉、右滑切表、左滑进选择器 ---
+    // --- 手势事件捕获：完美驱动左滑抽屉、右滑切表 ---
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        // 获取当前屏幕物理坐标用于精准卡片计算
+        float currentX = event.getX();
+
         switch (event.getAction()) {
             case MotionEvent.ACTION_DOWN:
                 isDragging = true;
-                startX = event.getX();
+                startX = currentX;
                 dragOffsetX = 0;
                 break;
                 
             case MotionEvent.ACTION_MOVE:
-                dragOffsetX = (int) (event.getX() - startX);
+                dragOffsetX = (int) (currentX - startX);
                 break;
                 
             case MotionEvent.ACTION_UP:
                 isDragging = false;
+                dragOffsetX = (int) (currentX - startX);
+                
+                // 【核心修复】：在清除偏移量前，强制将 ACTION_UP 状态和最终累计位移送入 Rust 触发翻页结算！
+                boolean isRound = false;
+                nativeUpdateEngineState(false, dragOffsetX, width, height, isRound, 0, 0);
+
                 // 检测点击事件：如果在选择器（Picker）状态下，计算点击了哪个卡片
                 if (Math.abs(dragOffsetX) < 10) {
                     int state = nativeGetSystemState();
-                    if (state == 1) { // 1 代表 SystemState::Picker
-                        int clickedCardId = calculateClickedCard(event.getX());
+                    if (state == 1) { // 1 代表 GlobalState::Picker
+                        int clickedCardId = calculateClickedCard(currentX);
                         nativeOnCardClicked(clickedCardId);
                     }
                 }
+                
+                // 状态机翻页决断已由 Rust 完成，安全重置 Java 手势物理量
                 dragOffsetX = 0;
                 break;
         }
@@ -89,15 +102,11 @@ public class LauncherEngine extends View {
     }
 
     private int calculateClickedCard(float x) {
-        // 简单计算卡片 ID
-        return (int) (x / 160.0f) + 1;
-    }
-
-    private void shortToByteArray(short[] src, byte[] dest) {
-        for (int i = 0; i < src.length; i++) {
-            dest[i * 2] = (byte) (src[i] & 0xFF);
-            dest[i * 2 + 1] = (byte) ((src[i] >> 8) & 0xFF);
-        }
+        // 基于 160 像素跨度精准计算卡片 ID
+        int cardId = (int) (x / 160.0f) + 1;
+        if (cardId < 1) cardId = 1;
+        if (cardId > 24) cardId = 24;
+        return cardId;
     }
 
     // --- 声明我们在 Rust 中实现的 JNI 映射 ---
