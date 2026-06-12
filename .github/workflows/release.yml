@@ -42,9 +42,10 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
           ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
+          NDK_PLATFORM: android-23
         run: |
           cd rust_core
-          cargo ndk -t armv7-linux-androideabi -p 23 build --release --lib
+          cargo ndk -t armv7-linux-androideabi build --release --lib
 
       - name: Package 32-bit APK
         run: |
