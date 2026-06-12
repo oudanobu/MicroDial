@@ -1,0 +1,8 @@
+{
+  "name": "ChronOxide",
+  "description": "Ultra-low memory Rust-based Android watch face engine for 512MB environments.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
