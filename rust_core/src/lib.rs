@@ -40,6 +40,7 @@ struct GlobalEngine {
     pub custom_image_address: *mut u8,
     pub custom_image_size: u32,
     pub last_drag_x: i16,
+    pub render_buffer: Vec<i16>, // 优雅复用的帧缓冲区，消灭所有高频堆分配，实现真正的运行时零内存抖动
 }
 
 unsafe impl Send for GlobalEngine {}
@@ -51,6 +52,7 @@ static ENGINE: Mutex<GlobalEngine> = Mutex::new(GlobalEngine {
     custom_image_address: std::ptr::null_mut(),
     custom_image_size: 0,
     last_drag_x: 0,
+    render_buffer: Vec::new(),
 });
 
 // 辅助函数：在任意像素坐标处用特定放大倍数和颜色绘制一个数字
@@ -100,7 +102,11 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeUpdat
         if !byte_buffer.is_null() {
             if let Ok(addr) = env.get_direct_buffer_address(&byte_buffer) {
                 engine.custom_image_address = addr;
+            } else {
+                engine.custom_image_address = std::ptr::null_mut();
             }
+        } else {
+            engine.custom_image_address = std::ptr::null_mut();
         }
 
         let drag = drag_offset_x as i16;
@@ -163,6 +169,9 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeRende
     width: jint,
     height: jint,
     is_round: jboolean,
+    hour: jint,
+    minute: jint,
+    second: jint,
 ) {
     if let Ok(mut engine) = ENGINE.lock() {
         let geo = ScreenGeometry {
@@ -173,9 +182,11 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeRende
         };
 
         let buffer_len = env.get_array_length(&j_frame_buffer).unwrap() as usize;
-        let mut native_vec = vec![0i16; buffer_len];
-        env.get_short_array_region(&j_frame_buffer, 0, &mut native_vec).unwrap();
-        let frame_buffer = std::slice::from_raw_parts_mut(native_vec.as_mut_ptr() as *mut u16, buffer_len);
+        if engine.render_buffer.len() != buffer_len {
+            engine.render_buffer.resize(buffer_len, 0);
+        }
+        env.get_short_array_region(&j_frame_buffer, 0, &mut engine.render_buffer).unwrap();
+        let frame_buffer = std::slice::from_raw_parts_mut(engine.render_buffer.as_mut_ptr() as *mut u16, buffer_len);
 
         match engine.state {
             GlobalState::Picker => {
@@ -221,26 +232,35 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeRende
                             if idx2 < frame_buffer.len() { frame_buffer[idx2] = 0x2104; }
                         }
 
-                        // 【真正载入时钟UI资产】：纯手工像素级渲染时光数字 (例如固定画出 1 0 3 5)
+                        // 【真正载入时钟UI资产】：纯手工像素级渲染时光数字
                         let text_color = 0xFFFF; // 纯白高亮
                         let digit_scale = 8;     // 放大8倍，清晰可见
                         let base_y = center_y - 20;
+
+                        let hour_high = (hour / 10) as usize;
+                        let hour_low = (hour % 10) as usize;
+                        let min_high = (minute / 10) as usize;
+                        let min_low = (minute % 10) as usize;
                         
-                        draw_digit(frame_buffer, &geo, 1, center_x - 70, base_y, digit_scale, text_color);
-                        draw_digit(frame_buffer, &geo, 0, center_x - 35, base_y, digit_scale, text_color);
-                        // 画冒号的分隔小方块
-                        for py in (center_y-10)..(center_y-5) {
-                            for px in (center_y-3)..(center_y+3) {
-                                frame_buffer[(py as u32 * geo.width as u32 + px as u32) as usize] = text_color;
+                        draw_digit(frame_buffer, &geo, hour_high, center_x - 70, base_y, digit_scale, text_color);
+                        draw_digit(frame_buffer, &geo, hour_low, center_x - 35, base_y, digit_scale, text_color);
+                        
+                        // 画冒号的分隔小方块，加入闪烁效果
+                        if second % 2 == 0 {
+                            for py in (center_y-10)..(center_y-5) {
+                                for px in (center_x-3)..(center_x+3) {
+                                    frame_buffer[(py as u32 * geo.width as u32 + px as u32) as usize] = text_color;
+                                }
+                            }
+                            for py in (center_y+5)..(center_y+10) {
+                                for px in (center_x-3)..(center_x+3) {
+                                    frame_buffer[(py as u32 * geo.width as u32 + px as u32) as usize] = text_color;
+                                }
                             }
                         }
-                        for py in (center_y+5)..(center_y+10) {
-                            for px in (center_y-3)..(center_y+3) {
-                                frame_buffer[(py as u32 * geo.width as u32 + px as u32) as usize] = text_color;
-                            }
-                        }
-                        draw_digit(frame_buffer, &geo, 3, center_x + 15, base_y, digit_scale, text_color);
-                        draw_digit(frame_buffer, &geo, 5, center_x + 50, base_y, digit_scale, text_color);
+                        
+                        draw_digit(frame_buffer, &geo, min_high, center_x + 15, base_y, digit_scale, text_color);
+                        draw_digit(frame_buffer, &geo, min_low, center_x + 50, base_y, digit_scale, text_color);
                     }
                     2 => {
                         // 2号：顶置红色罗马数字刻度
@@ -293,7 +313,6 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeRende
             }
         }
 
-        let i16_buffer = std::slice::from_raw_parts(frame_buffer.as_ptr() as *const i16, buffer_len);
-        env.set_short_array_region(&j_frame_buffer, 0, i16_buffer).unwrap();
+        env.set_short_array_region(&j_frame_buffer, 0, &engine.render_buffer).unwrap();
     }
 }

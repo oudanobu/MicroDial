@@ -27,6 +27,9 @@ public class LauncherEngine extends View {
     private long imagePointer = 0;
     private int imageSizeInBytes = 0;
 
+    // --- 新增：复用日历对象，彻底避免 GC 干扰 ---
+    private java.util.Calendar calendar = java.util.Calendar.getInstance();
+
     public LauncherEngine(Context context, int width, int height) {
         super(context);
         this.width = width;
@@ -71,11 +74,17 @@ public class LauncherEngine extends View {
         // 1. 判断是否是圆屏
         boolean isRound = false; 
 
+        // 获取当前时间戳直接注入 Rust 核心
+        calendar.setTimeInMillis(System.currentTimeMillis());
+        int hour = calendar.get(java.util.Calendar.HOUR_OF_DAY);
+        int minute = calendar.get(java.util.Calendar.MINUTE);
+        int second = calendar.get(java.util.Calendar.SECOND);
+
         // 优化：直接把 imageNativeBuffer 这个对象和它的大小传给 Rust，等它需要 24 号自定义表盘时直接刷入
         nativeUpdateEngineStateWithBuffer(isDragging, dragOffsetX, width, height, isRound, imageNativeBuffer, imageSizeInBytes);
         
         // 3. 让 Rust 直接向我们的 frameBuffer 数组写像素
-        nativeRenderFrame(frameBuffer, width, height, isRound);
+        nativeRenderFrame(frameBuffer, width, height, isRound, hour, minute, second);
         
         // 4. 【零纯 Java 循环优化】：利用 NIO 将 short 数组秒级注入 ByteBuffer
         reusableByteBuffer.rewind();
@@ -139,7 +148,7 @@ public class LauncherEngine extends View {
 
     // --- 声明我们在 Rust 中实现的 JNI 映射 ---
     private native void nativeUpdateEngineStateWithBuffer(boolean isDragging, int dragOffsetX, int width, int height, boolean isRound, Object byteBuffer, int imgSize);
-    private native void nativeRenderFrame(short[] buffer, int width, int height, boolean isRound);
+    private native void nativeRenderFrame(short[] buffer, int width, int height, boolean isRound, int hour, int minute, int second);
     private native void nativeOnCardClicked(int clickedId);
     private native int nativeGetSystemState();
 
