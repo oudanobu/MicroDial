@@ -13,6 +13,7 @@ import { Globe, Cpu, CheckCircle } from 'lucide-react';
 
 export default function App() {
   const [lang, setLang] = useState<Language>('zh');
+  const [activeFaceId, setActiveFaceId] = useState<number>(1);
 
   // Initialize with the exact mock provider data from the Rust unit test
   const [sensorData, setSensorData] = useState<SensorData>({
@@ -108,6 +109,8 @@ export default function App() {
               lang={lang} 
               geometry={geometry} 
               onGeometryChange={setGeometry}
+              activeFaceId={activeFaceId}
+              onFaceChange={setActiveFaceId}
             />
             
             <div className="mt-8 text-center bg-white/40 border border-slate-200/50 rounded-2xl px-6 py-4 max-w-xs backdrop-blur-sm">

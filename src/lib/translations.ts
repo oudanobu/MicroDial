@@ -41,7 +41,19 @@ export const translations = {
     app2Name: "静态内存池 (Pool)",
     app3Name: "传感器零拷贝 (Looper)",
     borderCheck: "编译期像素剪裁分析 (Rasterizer Loupe)",
-    borderCheckDesc: "使用 Rust `is_pixel_visible` 欧几里得距离核心，分析圆角物理屏边缘像素的过滤状态。"
+    borderCheckDesc: "使用 Rust `is_pixel_visible` 欧几里得距离核心，分析圆角物理屏边缘像素的过滤状态。",
+    // New translations for 1.4.0 & 1.5.0
+    activeWatchfaceBadge: "单例按需加载驱动 (Singleton Lazy Load)",
+    switchWatchface: "← 向左滑动进入表盘选择器",
+    currentFace: "当前渲染 ID:",
+    face0: "数字经典 (ID: 0)",
+    face1: "传统指针 (ID: 1)",
+    face2: "罗马数字 (ID: 2)",
+    face3: "运动数据 (ID: 3)",
+    face23: "复古游戏 (ID: 23)",
+    face24: "自定义图像 (ID: 24)",
+    pickerTitle: "按需点选卡片",
+    pickerEmpty: "资源仅用时加载"
   },
   en: {
     brandName: "ChronOxide Watch Face Engine",
@@ -83,7 +95,19 @@ export const translations = {
     app2Name: "Static Memory",
     app3Name: "Zero-Copy Sensor",
     borderCheck: "Rust Core Edge Loupe (Rasterizer Check)",
-    borderCheckDesc: "Evaluating pixel coordinates visibility matching Rust's `(dx*dx + dy*dy) <= r*r` boundary equation."
+    borderCheckDesc: "Evaluating pixel coordinates visibility matching Rust's `(dx*dx + dy*dy) <= r*r` boundary equation.",
+    // New translations for 1.4.0 & 1.5.0
+    activeWatchfaceBadge: "Singleton Lazy Loader",
+    switchWatchface: "← Swipe left to open picker",
+    currentFace: "Active Render ID:",
+    face0: "Digital Classic (ID: 0)",
+    face1: "Analog Minimal (ID: 1)",
+    face2: "Roman Numeral (ID: 2)",
+    face3: "Sports Tracker (ID: 3)",
+    face23: "Retro Gamer (ID: 23)",
+    face24: "Custom Image (ID: 24)",
+    pickerTitle: "Select Watch Face",
+    pickerEmpty: "Lazy assets loading"
   }
 };
 

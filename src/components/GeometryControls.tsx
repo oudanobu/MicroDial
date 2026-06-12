@@ -159,7 +159,7 @@ export function GeometryControls({ settings, onChange, lang }: GeometryControlsP
             <input
               type="range"
               min={-settings.resolution}
-              max={0}
+              max={settings.resolution}
               value={settings.dragOffsetX}
               onChange={(e) => handleDragOffsetChange(parseInt(e.target.value))}
               className="w-full accent-emerald-600"

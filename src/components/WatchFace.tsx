@@ -13,9 +13,11 @@ interface WatchFaceProps {
   lang: Language;
   geometry: GeometrySettings;
   onGeometryChange?: (geometry: GeometrySettings) => void;
+  activeFaceId?: number;
+  onFaceChange?: (id: number) => void;
 }
 
-export function WatchFace({ sensorData, lang, geometry, onGeometryChange }: WatchFaceProps) {
+export function WatchFace({ sensorData, lang, geometry, onGeometryChange, activeFaceId = 0, onFaceChange }: WatchFaceProps) {
   const [time, setTime] = useState(new Date());
   const t = translations[lang];
 
@@ -34,68 +36,125 @@ export function WatchFace({ sensorData, lang, geometry, onGeometryChange }: Watc
   // Calculate sliding frame viewports using the exact Rust algorithms requested:
   // let (face_x, drawer_x) = calculate_drawer_viewport(&geo, &touch);
   const maxOffset = -geometry.resolution;
-  const clampedOffset = Math.max(maxOffset, Math.min(0, geometry.dragOffsetX));
+  const clampedOffset = Math.max(maxOffset, Math.min(geometry.resolution, geometry.dragOffsetX));
   
-  const faceX = clampedOffset;
-  const drawerX = clampedOffset + geometry.resolution;
+  // App logic: Launcher mode vs Picker mode
+  const [systemState, setSystemState] = useState<'Launcher' | 'Picker'>('Launcher');
+  const [pickerScrollX, setPickerScrollX] = useState(0);
+
+  // If we are dragging left, the original dial stays at top level and moves left.
+  const faceX = systemState === 'Launcher' ? clampedOffset : -geometry.resolution;
+  
+  // The picker starts at full offset right, and slides in
+  const pickerX = systemState === 'Launcher' ? clampedOffset + geometry.resolution : 0;
+  
+  // Hide the next incoming screen we added previously. Let's adapt it to the picker.
+  const nextFaceX = -geometry.resolution;
+
+  // Determine watch face theme coloring
+  let bgClass = "bg-slate-950"; // default ID 0
+  let primaryTextClass = "text-white";
+  let accentClass1 = "text-emerald-400";
+  let accentClass2 = "text-sky-400";
+  let faceLabel = t.face0;
+
+  if (activeFaceId === 1) {
+    bgClass = "bg-red-950/80";
+    accentClass1 = "text-rose-400";
+    accentClass2 = "text-amber-400";
+    faceLabel = t.face1;
+  } else if (activeFaceId === 2) {
+    bgClass = "bg-emerald-950/80";
+    accentClass1 = "text-teal-400";
+    accentClass2 = "text-lime-400";
+    faceLabel = t.face2;
+  } else if (activeFaceId === 3) {
+    bgClass = "bg-sky-950/80";
+    accentClass1 = "text-cyan-400";
+    accentClass2 = "text-blue-400";
+    faceLabel = t.face3;
+  } else if (activeFaceId === 23) {
+    bgClass = "bg-purple-950/80";
+    accentClass1 = "text-fuchsia-400";
+    accentClass2 = "text-pink-400";
+    faceLabel = t.face23;
+  } else if (activeFaceId === 24) {
+    bgClass = "bg-black";
+    primaryTextClass = "text-slate-300";
+    accentClass1 = "text-slate-500";
+    accentClass2 = "text-slate-500";
+    faceLabel = t.face24;
+  } else if (activeFaceId > 3 && activeFaceId < 23) {
+    bgClass = "bg-slate-900";
+    faceLabel = `Custom ID: ${activeFaceId}`;
+  }
 
   // Render scale for low-res (240x240 fits neatly in a 320px physical container container)
   const isMini = geometry.resolution === 240;
-  const scaleClass = isMini ? 'scale-75 origin-center' : 'scale-100';
 
-  // Drag listeners to allow user to drag directly on the screen!
-  const handleMouseDown = (e: React.MouseEvent) => {
+  // Handle the logic of Card clicked
+  const onCardClicked = (id: number) => {
+    if (onFaceChange) {
+      onFaceChange(id);
+    }
+    setSystemState('Launcher');
+    // Vibration effect simulation handled in real environment
+    if (navigator.vibrate) {
+      navigator.vibrate(20);
+    }
+  };
+
+  const activeFacesArray = Array.from({length: 24}, (_, i) => i + 1);
+
+  const handlePointerDown = (clientX: number) => {
     if (!onGeometryChange) return;
     onGeometryChange({
       ...geometry,
       isDragging: true,
-      dragStartX: e.clientX - geometry.dragOffsetX
+      dragStartX: systemState === 'Launcher' ? clientX - geometry.dragOffsetX : clientX - pickerScrollX
     });
-  };
+  }
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handlePointerMove = (clientX: number) => {
     if (!geometry.isDragging || !onGeometryChange) return;
-    const offset = e.clientX - geometry.dragStartX;
-    const clamped = Math.max(-geometry.resolution, Math.min(0, offset));
-    onGeometryChange({
-      ...geometry,
-      dragOffsetX: clamped
-    });
-  };
+    if (systemState === 'Launcher') {
+      const offset = clientX - geometry.dragStartX;
+      const clamped = Math.max(-geometry.resolution, Math.min(geometry.resolution, offset));
+      onGeometryChange({
+        ...geometry,
+        dragOffsetX: clamped
+      });
+    } else {
+      const targetScroll = -(clientX - geometry.dragStartX); // reverse scroll logic for picker view
+      const maxScroll = (24 - 1) * 160;
+      setPickerScrollX(Math.max(0, Math.min(targetScroll, maxScroll)));
+    }
+  }
 
-  const handleMouseUpOrLeave = () => {
+  const handlePointerUp = () => {
     if (!geometry.isDragging || !onGeometryChange) return;
     
-    // Snap feature: if swiped more than half, snap to drawer, else snap back to dial
-    const halfRes = -geometry.resolution / 2;
-    const finalOffset = geometry.dragOffsetX < halfRes ? -geometry.resolution : 0;
-    
-    onGeometryChange({
-      ...geometry,
-      isDragging: false,
-      dragOffsetX: finalOffset
-    });
+    if (systemState === 'Launcher') {
+      const halfRes = geometry.resolution * 0.3; // Threshold for entering picker
+      
+      if (geometry.dragOffsetX < -halfRes) {
+        setSystemState('Picker');
+        setPickerScrollX((Math.max(1, activeFaceId) - 1) * 160);
+        onGeometryChange({ ...geometry, isDragging: false, dragOffsetX: 0 });
+      } else {
+        // Return back to center
+        onGeometryChange({ ...geometry, isDragging: false, dragOffsetX: 0 });
+      }
+    } else {
+      onGeometryChange({ ...geometry, isDragging: false });
+    }
   };
 
-  // Mobile Touch handlers
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (!onGeometryChange || e.touches.length === 0) return;
-    onGeometryChange({
-      ...geometry,
-      isDragging: true,
-      dragStartX: e.touches[0].clientX - geometry.dragOffsetX
-    });
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (!geometry.isDragging || !onGeometryChange || e.touches.length === 0) return;
-    const offset = e.touches[0].clientX - geometry.dragStartX;
-    const clamped = Math.max(-geometry.resolution, Math.min(0, offset));
-    onGeometryChange({
-      ...geometry,
-      dragOffsetX: clamped
-    });
-  };
+  const handleMouseDown = (e: React.MouseEvent) => handlePointerDown(e.clientX);
+  const handleMouseMove = (e: React.MouseEvent) => handlePointerMove(e.clientX);
+  const handleMouseUpOrLeave = () => handlePointerUp();
+  const handleTouchStart = (e: React.TouchEvent) => handlePointerDown(e.touches[0].clientX);
+  const handleTouchMove = (e: React.TouchEvent) => handlePointerMove(e.touches[0].clientX);
 
   return (
     <div className="relative flex flex-col items-center">
@@ -128,13 +187,20 @@ export function WatchFace({ sensorData, lang, geometry, onGeometryChange }: Watc
         >
           {/* Viewport 1: Sports Watch Face Dial (faceX offset) */}
           <div 
-            className="absolute top-0 left-0 w-full h-full flex flex-col items-center justify-center text-slate-100 bg-slate-950 transition-transform duration-75"
+            className={`absolute top-0 left-0 w-full h-full flex flex-col items-center justify-center transition-transform duration-75 ${bgClass} ${primaryTextClass}`}
             style={{ 
               transform: `translateX(${faceX}px)`,
               width: `${geometry.resolution}px`,
               height: `${geometry.resolution}px`,
             }}
           >
+            {/* Singleton Current Face Indicator */}
+            <div className="absolute top-2 w-full flex justify-center opacity-40">
+              <span className={`text-[8px] font-mono px-1.5 py-0.5 rounded border border-white/20 bg-black/20 text-white`}>
+                {faceLabel}
+              </span>
+            </div>
+
             {/* Time Display */}
             <div className="mt-2 flex flex-col items-center">
               <span className={`font-mono font-bold tracking-tight text-white leading-none ${
@@ -153,16 +219,16 @@ export function WatchFace({ sensorData, lang, geometry, onGeometryChange }: Watc
             {/* Primary Metrics */}
             <div className={`flex mt-3 ${isMini ? 'gap-6' : 'gap-9'}`}>
               <div className="flex flex-col items-center justify-center">
-                <Footprints className={`${isMini ? 'w-4 h-4' : 'w-5 h-5'} text-emerald-400 mb-0.5`} />
+                <Footprints className={`${isMini ? 'w-4 h-4' : 'w-5 h-5'} ${accentClass1} mb-0.5`} />
                 <span className={`font-mono font-medium ${isMini ? 'text-sm' : 'text-lg'}`}>{sensorData.steps}</span>
-                <span className="text-[10px] text-slate-500 font-medium">{t.steps}</span>
+                <span className="text-[10px] opacity-70 font-medium">{t.steps}</span>
               </div>
               <div className="flex flex-col items-center justify-center">
-                <Mountain className={`${isMini ? 'w-4 h-4' : 'w-5 h-5'} text-sky-400 mb-0.5`} />
+                <Mountain className={`${isMini ? 'w-4 h-4' : 'w-5 h-5'} ${accentClass2} mb-0.5`} />
                 <span className={`font-mono font-medium ${isMini ? 'text-sm' : 'text-lg'}`}>
                   {formattedAltitude}{lang === 'zh' ? '米' : 'm'}
                 </span>
-                <span className="text-[10px] text-slate-500 font-medium">{lang === 'zh' ? '海拔' : 'Alt'}</span>
+                <span className="text-[10px] opacity-70 font-medium">{lang === 'zh' ? '海拔' : 'Alt'}</span>
               </div>
             </div>
 
@@ -201,75 +267,51 @@ export function WatchFace({ sensorData, lang, geometry, onGeometryChange }: Watc
             />
           </div>
 
-          {/* Viewport 2: Android Application Drawer (drawerX offset) */}
+          {/* Viewport 2: Watch Face Picker (pickerX offset) */}
           <div 
-            className="absolute top-0 left-0 w-full h-full flex flex-col px-4 pt-4 text-slate-100 bg-slate-900 transition-transform duration-75 overflow-y-auto scrollbar-none"
+            className="absolute top-0 left-0 w-full h-full flex items-center transition-transform duration-75"
             style={{ 
-              transform: `translateX(${drawerX}px)`,
+              transform: `translateX(${pickerX}px)`,
               width: `${geometry.resolution}px`,
               height: `${geometry.resolution}px`,
+              backgroundColor: '#212124' // 0x2104 hex approximation for dark gray base
             }}
           >
-            {/* Header */}
-            <div className="flex items-center gap-1.5 border-b border-slate-800 pb-2 mb-2 shrink-0">
-              <Cpu className="w-3.5 h-3.5 text-sky-400" />
-              <span className="font-mono text-[10px] uppercase tracking-wider text-slate-400 font-bold">
-                {lang === 'zh' ? '应用抽屉' : 'Apps Drawer'}
-              </span>
+            {/* The internal scroll container for the 1-24 cards */}
+            <div 
+              className="absolute top-0 bottom-0 flex items-center"
+              style={{ transform: `translateX(${-pickerScrollX + 40}px)` }}
+            >
+              {activeFacesArray.map((id) => {
+                // Dynamically build card appearance based on rust specs
+                let microColor = "bg-slate-600";
+                if (id === 1) microColor = "bg-blue-600"; // 0x001F
+                if (id === 2) microColor = "bg-red-600"; // 0xF800
+                if (id === 3) microColor = "bg-green-500"; // 0x07E0
+                if (id === 24) microColor = "bg-white"; // 0xFFFF
+
+                return (
+                  <div 
+                    key={id}
+                    onClick={() => onCardClicked(id)}
+                    className="relative shrink-0 flex flex-col justify-center items-center shadow-md active:scale-95 transition-transform"
+                    style={{
+                      width: 120, // card_width
+                      height: geometry.resolution - 80, // trimmed top/bottom margins (40..geo.height-40)
+                      marginRight: 40, // card_gap
+                      backgroundColor: '#1E232E'
+                    }}
+                  >
+                    <div className={`w-8 h-8 rounded-full mb-3 ${microColor}`} />
+                    <span className="text-[10px] font-mono text-slate-300 font-bold mb-1">ID: {id}</span>
+                    <span className="text-[8px] text-slate-500 leading-tight block text-center px-2">{t.pickerTitle}</span>
+                  </div>
+                );
+              })}
             </div>
-
-            {/* Apps Listing - optimized for 240 vs 320 densities */}
-            <div className="flex flex-col gap-1.5 flex-1 pb-4">
-              
-              {/* App item 1 */}
-              <div className="flex items-center justify-between p-2 rounded-lg bg-slate-950/60 border border-slate-800">
-                <div className="flex items-center gap-2">
-                  <div className="p-1 rounded bg-sky-500/10">
-                    <Terminal className="w-3.5 h-3.5 text-sky-400" />
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-bold text-slate-300">{t.app1Name}</span>
-                    {!isMini && <span className="text-[8px] text-slate-500">libchronoxide FFI v1.3</span>}
-                  </div>
-                </div>
-                <ChevronRight className="w-3 h-3 text-slate-600" />
-              </div>
-
-              {/* App item 2 */}
-              <div className="flex items-center justify-between p-2 rounded-lg bg-slate-950/60 border border-slate-800">
-                <div className="flex items-center gap-2">
-                  <div className="p-1 rounded bg-emerald-500/10">
-                    <History className="w-3.5 h-3.5 text-emerald-400" />
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-bold text-slate-300">{t.app2Name}</span>
-                    {!isMini && <span className="text-[8px] text-slate-500">Static allocation locked</span>}
-                  </div>
-                </div>
-                <ChevronRight className="w-3 h-3 text-slate-600" />
-              </div>
-
-              {/* App item 3 */}
-              <div className="flex items-center justify-between p-2 rounded-lg bg-slate-950/60 border border-slate-800">
-                <div className="flex items-center gap-2">
-                  <div className="p-1 rounded bg-rose-500/10">
-                    <Activity className="w-3.5 h-3.5 text-rose-400" />
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-bold text-slate-300">{t.app3Name}</span>
-                    {!isMini && <span className="text-[8px] text-slate-500">ALooper Zero-Copy hook</span>}
-                  </div>
-                </div>
-                <ChevronRight className="w-3 h-3 text-slate-600" />
-              </div>
-
-              {/* Static RAM alert footer inside the drawer */}
-              <div className="mt-auto flex items-center gap-1.5 p-1.5 rounded bg-slate-950 text-slate-500 border border-slate-800/60">
-                <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
-                <span className="text-[8px] font-mono leading-none">MEM OK: 14.2MB Buffer Pool</span>
-              </div>
-
-            </div>
+            
+            {/* Edge mask overlay to simulate physical resolution constraints */}
+            <div className="absolute inset-0 pointer-events-none border border-slate-700/30" />
           </div>
 
         </div>
@@ -277,10 +319,15 @@ export function WatchFace({ sensorData, lang, geometry, onGeometryChange }: Watc
       </div>
 
       {/* Swipe visual indicator helper */}
-      <span className="text-[10px] text-slate-400 mt-2 font-mono flex items-center gap-1">
-        <Info className="w-3.5 h-3.5 text-slate-500" />
-        {lang === 'zh' ? '在手表盘上按住并向左滑动拉出抽屉' : 'Click and drag left on watch to open drawer'}
-      </span>
+      <div className="text-[10px] text-slate-400 mt-2 font-mono flex flex-col items-center gap-1">
+        <span className="flex items-center gap-1">
+          <Info className="w-3.5 h-3.5 text-slate-500" />
+          {systemState === 'Launcher' ? t.switchWatchface : 'Swipe or click to select face'}
+        </span>
+        <span className="text-[9px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+          {t.activeWatchfaceBadge}: {activeFaceId}
+        </span>
+      </div>
       
     </div>
   );

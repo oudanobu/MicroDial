@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-06-12
+
+### Added
+- **Watch Face Picker Viewport**: Added a lightweight, horizontally scrolling watch face picker accessed via a left swipe, capable of selecting among 24 watch faces without loading heavy image preview assets.
+- **Micro-scale Render Passes**: Implemented real-time dynamic card rendering (`WatchFacePicker`) that evaluates viewport bounds and only renders 2-3 watchface miniature cards at a time.
+- **Two-Phase Architecture State Machine**: Embedded a `SystemState` tracker handling `Launcher` and `Picker` runtime modes securely on the stack.
+
+## [1.4.0] - 2026-06-12
+
+### Added
+- **Singleton WatchFace Pool Architectures**: Dropped array-based instances and shifted to `SingleFaceEngine` lazy-load pattern to cap heap memory fluctuations.
+- **Dynamic Watchface Switcher**: Implemented right-swipe context switching triggering near zero-allocation static dispatch loops.
+
 ## [1.3.0] - 2026-06-12
 
 ### Added

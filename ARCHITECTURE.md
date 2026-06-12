@@ -16,15 +16,24 @@
 * **主要用途**：声明传感器数据抽象（`WidgetDataProvider`）、表盘渲染标准接口（`WatchFaceRenderer`）以及低端环境落盘接口（`LocalStorage`）。
 * **物理意义**：作为 Android NDK 原生层与 Rust 逻辑层的解耦边界，所有单元测试与真机 Mock 均基于此文件进行。
 
-### 3. `src/engine.rs` —— 桌面中央主控引擎
+### 3. `src/picker.rs` —— 极致空间复杂度的表盘选择器
+* **主要用途**：管理 1-24 号表盘的预览卡片横向滚动列表（包含手势滑动、边界弹簧阻尼计算）。
+* **内存设计**：禁止生成预览大图，通过 `render_picker_view` 实时在栈内动态微缩绘制当前可见的 2-3 个小卡片，规避 OOM。
+* **状态隔离**：引入两段式状态机 (`SystemState::Launcher` 与 `SystemState::Picker`)。
+
+### 4. `src/watchface_pool.rs` —— 单例驱动按需加载池
+* **主要用途**：承载 `SingleFaceEngine`，单例驱动架构，彻底取代传统的常驻数组。通过静态 ID (`ActiveFace`) 进行 24+ 表盘分支匹配。
+* **内存状态**：任何时候切换表盘，只在堆内存进行静态指针绑定切换，完全摒弃动态内存分配，使得系统堆内存波动始终 $\le 4 \text{ KB}$。
+
+### 5. `src/engine.rs` —— 桌面中央主控引擎
 * **主要用途**：管理 20+ 款表盘驱动的注册流水线（`WatchLauncherEngine`），承载主循环渲染时钟，并提供 1900-2200 年的时间跨度边界安全检查。
 * **并发设计**：利用原子屏障 `AtomicBool` 严格控制异步刷帧时钟，确保多线程下无数据竞争（Data Race）。
 
-### 4. `src/render/` (目录) —— 20+ 款独立表盘驱动集
+### 5. `src/render/` (目录) —— 20+ 款独立表盘驱动集
 * **主要用途**：存放具体表盘的绘制逻辑（如运动表盘 `SportsWatchFace`、数字表盘、机械模拟表盘等）。
 * **性能要求**：禁止引入 Skia 等重型图形渲染库。必须直接面向 `&mut [u16]`（RGB565 裸像素缓冲区）进行直写绘制，确保在 512MB 内存设备上实现真正的零拷贝刷新。
 
-### 5. `src/ffi.rs` —— Android JNI/NDK 硬件桥接层
+### 6. `src/ffi.rs` —— Android JNI/NDK 硬件桥接层
 * **主要用途**：对接 Android 6.0 的 `ALooper` 硬件传感器（GPS 坐标、气压计、计步器），并将数据无锁投递到 Rust 侧；接收底层 Surface 传来的 `NativeWindow` 指针。
 
 ---
