@@ -47,6 +47,11 @@ jobs:
           cd rust_core
           cargo ndk -t armv7-linux-androideabi build --release --lib
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.4
+
       - name: Package 32-bit APK
         run: |
           mkdir -p release-apk
@@ -57,7 +62,13 @@ jobs:
           
           echo "Building APK via Gradle..."
           cd android
-          gradle assembleRelease
+          
+          if [ -f "./gradlew" ]; then
+            chmod +x gradlew
+            ./gradlew assembleRelease
+          else
+            gradle assembleRelease
+          fi
           
           cp app/build/outputs/apk/release/*.apk ../release-apk/ChronOxide-v1.0.0-armeabi-v7a.apk
 
