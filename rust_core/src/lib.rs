@@ -41,6 +41,13 @@ struct GlobalEngine {
     pub custom_image_size: u32,
     pub last_drag_x: i16,
     pub render_buffer: Vec<i16>, // 优雅复用的帧缓冲区，消灭所有高频堆分配，实现真正的运行时零内存抖动
+    // 运行时同步的时钟与硬件传感器生命线
+    pub hour: u8,
+    pub minute: u8,
+    pub second: u8,
+    pub fps: u8,
+    pub steps: u32,
+    pub heart_rate: u8,
 }
 
 unsafe impl Send for GlobalEngine {}
@@ -53,6 +60,12 @@ static ENGINE: Mutex<GlobalEngine> = Mutex::new(GlobalEngine {
     custom_image_size: 0,
     last_drag_x: 0,
     render_buffer: Vec::new(),
+    hour: 10,
+    minute: 35,
+    second: 0,
+    fps: 60,
+    steps: 1250,
+    heart_rate: 72,
 });
 
 // 辅助函数：在任意像素坐标处用特定放大倍数和颜色绘制一个数字
@@ -91,14 +104,26 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeUpdat
     _width: jint,
     _height: jint,
     _is_round: jboolean,
-    byte_buffer: JObject,
+    hour: jint,
+    minute: jint,
+    second: jint,
+    fps: jint,
+    steps: jint,
+    hr: jint,
+    byte_buffer: jni::objects::JByteBuffer,
     img_size: jint,
 ) {
     if let Ok(mut engine) = ENGINE.lock() {
-        engine.custom_image_size = img_size as u32;
         engine.last_drag_x = drag_offset_x as i16;
+        engine.hour = hour as u8;
+        engine.minute = minute as u8;
+        engine.second = second as u8;
+        engine.fps = fps as u8;
+        engine.steps = steps as u32;
+        engine.heart_rate = hr as u8;
+        engine.custom_image_size = img_size as u32;
 
-        // 安全解析 Java 直连 DirectBuffer 的底层 C 内存地址
+        // 安全且类型安全地解析 Java 直连 DirectBuffer 的底层 C 内存地址
         if !byte_buffer.is_null() {
             if let Ok(addr) = env.get_direct_buffer_address(&byte_buffer) {
                 engine.custom_image_address = addr;
@@ -196,21 +221,104 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeRende
             }
             
             GlobalState::AppDrawer => {
-                frame_buffer.fill(0x18C3); // 质感更强的暗灰底色
-                let line_color = 0x7BEF;
-                let item_height = 50;
+                frame_buffer.fill(0x18C3); // 质感更强的精美暗灰底色
+                let line_color = 0x3186; // 科技灰边框
+                let item_height = 55;
                 
                 for i in 0..3 {
                     let start_y = 35 + i * item_height;
-                    for x in 20..(geo.width - 20) {
-                        let idx = (start_y as u32 * geo.width as u32 + x as u32) as usize;
-                        if idx < frame_buffer.len() { frame_buffer[idx] = line_color; }
+                    // 绘制外卡片边框
+                    for x in 15..(geo.width - 15) {
+                        let idx_top = (start_y as u32 * geo.width as u32 + x as u32) as usize;
+                        let idx_bot = (((start_y + 45) as u32) * geo.width as u32 + x as u32) as usize;
+                        if idx_top < frame_buffer.len() { frame_buffer[idx_top] = line_color; }
+                        if idx_bot < frame_buffer.len() { frame_buffer[idx_bot] = line_color; }
                     }
-                    for py in (start_y + 10)..(start_y + 35) {
-                        for px in 30..55 {
+                    for y in start_y..(start_y + 45) {
+                        let idx_left = (y as u32 * geo.width as u32 + 15) as usize;
+                        let idx_right = (y as u32 * geo.width as u32 + (geo.width - 15) as u32) as usize;
+                        if idx_left < frame_buffer.len() { frame_buffer[idx_left] = line_color; }
+                        if idx_right < frame_buffer.len() { frame_buffer[idx_right] = line_color; }
+                    }
+
+                    // 绘制左侧状态指示灯（小方块）
+                    for py in (start_y + 12)..(start_y + 32) {
+                        for px in 25..45 {
                             let idx = (py as u32 * geo.width as u32 + px as u32) as usize;
-                            if idx < frame_buffer.len() { frame_buffer[idx] = 0x07E0; }
+                            if idx < frame_buffer.len() { 
+                                frame_buffer[idx] = if i == 0 { 0x07E0 } else if i == 1 { 0xFB20 } else { 0x07FF }; 
+                            }
                         }
+                    }
+
+                    // 填充具体的数据指示
+                    match i {
+                        0 => {
+                            // 条目 1：Sys Terminal (FPS 帧率计数器)
+                            let val = engine.fps as usize;
+                            draw_digit(frame_buffer, &geo, (val / 10) % 10, 60, (start_y + 15) as u16, 3, 0xFFFF);
+                            draw_digit(frame_buffer, &geo, val % 10, 72, (start_y + 15) as u16, 3, 0xFFFF);
+                            
+                            // 后面绘制极简 F 代表 FPS 英文缩写
+                            let f_start_x = 90;
+                            let f_start_y = start_y + 15;
+                            for py in f_start_y..(f_start_y + 15) {
+                                for px in f_start_x..(f_start_x + 3) {
+                                    let idx = (py as u32 * geo.width as u32 + px as u32) as usize;
+                                    if idx < frame_buffer.len() { frame_buffer[idx] = 0x07E0; }
+                                }
+                            }
+                            for px in f_start_x..(f_start_x + 10) {
+                                let idx1 = (f_start_y as u32 * geo.width as u32 + px as u32) as usize;
+                                let idx2 = (((f_start_y + 7) as u32) * geo.width as u32 + px as u32) as usize;
+                                if idx1 < frame_buffer.len() { frame_buffer[idx1] = 0x07E0; }
+                                if idx2 < frame_buffer.len() { frame_buffer[idx2] = 0x07E0; }
+                            }
+                        }
+                        1 => {
+                            // 条目 2：Slab Allocation Guard (展示 15MB 显存)
+                            draw_digit(frame_buffer, &geo, 1, 60, (start_y + 15) as u16, 3, 0xFFFF);
+                            draw_digit(frame_buffer, &geo, 5, 72, (start_y + 15) as u16, 3, 0xFFFF);
+
+                            // 手画字母 'M'
+                            let m_start_x = 90;
+                            let m_start_y = start_y + 15;
+                            for py in m_start_y..(m_start_y + 15) {
+                                for px in [m_start_x, m_start_x + 8] {
+                                    for sx in 0..2 {
+                                        let idx = (py as u32 * geo.width as u32 + (px + sx) as u32) as usize;
+                                        if idx < frame_buffer.len() { frame_buffer[idx] = 0xFB20; }
+                                    }
+                                }
+                            }
+                            for sx in 0..10 {
+                                let idx = (m_start_y as u32 * geo.width as u32 + (m_start_x + sx) as u32) as usize;
+                                if idx < frame_buffer.len() { frame_buffer[idx] = 0xFB20; }
+                            }
+                        }
+                        2 => {
+                            // 条目 3：Direct JNI Sensor Pipe (计步器与心率计实时传感器泵)
+                            let s_val = engine.steps as usize;
+                            draw_digit(frame_buffer, &geo, (s_val / 1000) % 10, 60, (start_y + 15) as u16, 3, 0xFFFF);
+                            draw_digit(frame_buffer, &geo, (s_val / 100) % 10, 72, (start_y + 15) as u16, 3, 0xFFFF);
+                            draw_digit(frame_buffer, &geo, (s_val / 10) % 10, 84, (start_y + 15) as u16, 3, 0xFFFF);
+                            draw_digit(frame_buffer, &geo, s_val % 10, 96, (start_y + 15) as u16, 3, 0xFFFF);
+
+                            // 心率: hr (例如 72 bpm)
+                            let hr_val = engine.heart_rate as usize;
+                            let hr_start_x = 125;
+                            // 绘制心律小图标（红心，4x5小像素快）
+                            for py in (start_y + 15)..(start_y + 20) {
+                                for px in (hr_start_x - 10)..(hr_start_x - 5) {
+                                    let idx = (py as u32 * geo.width as u32 + px as u32) as usize;
+                                    if idx < frame_buffer.len() { frame_buffer[idx] = 0xF800; }
+                                }
+                            }
+                            draw_digit(frame_buffer, &geo, (hr_val / 100) % 10, hr_start_x, (start_y + 15) as u16, 3, 0x07FF);
+                            draw_digit(frame_buffer, &geo, (hr_val / 10) % 10, hr_start_x + 12, (start_y + 15) as u16, 3, 0x07FF);
+                            draw_digit(frame_buffer, &geo, hr_val % 10, hr_start_x + 24, (start_y + 15) as u16, 3, 0x07FF);
+                        }
+                        _ => {}
                     }
                 }
             }

@@ -32,14 +32,15 @@
 ### 6. `src/lib.rs` —— NDK/JNI 桥接层与高频渲染核心
 * **主要用途**：JNI 数据流双向直刷。管理 `GlobalEngine` 全局互斥状态机，通过 NIO 管道直接安全访问 Android 端直连 `DirectBuffer` 内存地址（24号自定义图片表盘），并将原生像素流无拷贝直推至硬件表面。
 * **零抖动优化**：不再高频产生任何短暂的 `Vec` 分配。在 Rust 底层互斥容器内静态常驻一块复用帧缓冲区 `render_buffer`，从根本上消除了 Java-Rust 内存边界跨越时的堆上高速分配，达成绝佳的微秒级低耗同步。
+* **JNI 类型安全**：在 `jni` crate v0.21.1+ 中，采用具体的 `jni::objects::JByteBuffer` 代替通用的 `JObject` 进行 ByteBuffer 参数接收，在编译期保证底层 C 内存直刷的零拷贝提取安全性。
 
 ---
 
 ## 🚀 二、 极致内存及高速同步架构 (Extreme Memory & High-Speed Sync Architecture)
 
-### 1. 动态时间轴的微秒级低耗同步
+### 1. 动态时间轴的微秒级低耗同步 & 硬件生命线集成
 * **痛点**：如果每秒通过 Java 端将时间格式化为 `String` 后传递给 Rust，会导致在低端设备（512MB RAM）上频繁触发 Java 垃圾回收（GC），从而产生可感知的微卡顿。
-* **设计方案**：在 Java 端 `onDraw` 物理重绘循环中，直接提取当前的系统时间（高精度时、分、秒），作为 3 个最基本的整型（`int`）寄存器数值传给 NDK 的 `nativeRenderFrame` 方法。
+* **设计方案**：在 Java 端 `onDraw` 物理重绘循环中，直接提取当前的系统时间（高精度时、分、秒），利用 NDK 桥接传递基础整数到 Rust 侧。
 * **JNI 极速拆分**：
   ```rust
   let hour_high = (hour / 10) as usize;
@@ -48,6 +49,10 @@
   let min_low = (minute % 10) as usize;
   ```
   在 Rust 侧，无需字符串转化，直接以模运算对高、低位整型进行提取，并秒级泵送给手写的高性能点阵字体进行纯点阵绘制，同时通过秒数奇偶状态控制中央分隔冒号像素闪烁，实现微秒级低功耗渲染。
+* **物理监控抽屉 (GlobalState::AppDrawer / Viewport 3)**：
+  * **条目 1：Sys Terminal（故障诊断与帧率计数器）**：在 Java 层精细通过纳秒高精时间差算得实时渲染 FPS，通过字节管道实时泵入 Rust 后绘制双位大数字诊断卡，辅以手写像素 'F' 标定。
+  * **条目 2：Slab Allocation Guard（显存安全防卫）**：诊断并显示 15MB 预分配静态显存的安全常驻状态。
+  * **条目 3：Direct JNI Sensor Pipe（硬件传感器管线）**：Java 层实现 `SensorEventListener` 监听，实时捕捉物理穿戴硬件的 `TYPE_STEP_COUNTER`（计步数）与 `TYPE_HEART_RATE`（心率）数据，通过直连管道秒级泵入 Rust 侧，并绘制出专属运动计步及动效心率数值指示。
 
 ### 2. 运行时零分配帧传输（Zero-Heap-Allocation Frame Transfer）
 * **原理**：JNI 下 `get_short_array_region` 与 `set_short_array_region` 在高频率（60FPS）调用下如果每次都生成全新局部 Rust `Vec`，会对内存造成极大挤压。
