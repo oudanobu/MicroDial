@@ -52,6 +52,13 @@ jobs:
         with:
           gradle-version: 8.4
 
+      - name: Fix AndroidX and Jetifier Properties
+        run: |
+          cd android
+          echo "android.useAndroidX=true" >> gradle.properties
+          echo "android.enableJetifier=true" >> gradle.properties
+          echo "org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m" >> gradle.properties
+
       - name: Package 32-bit APK
         run: |
           mkdir -p release-apk
