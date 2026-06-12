@@ -77,7 +77,7 @@ pub enum GlobalState {
     CompassPanel,
 }
 
-struct GlobalEngine {
+pub struct GlobalEngine {
     pub state: GlobalState,
     pub picker: WatchFacePicker,
     pub custom_image_address: *mut u8,
