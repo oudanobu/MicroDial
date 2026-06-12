@@ -8,6 +8,10 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
+import android.os.Bundle;
 import android.view.MotionEvent;
 import android.view.View;
 import java.io.InputStream;
@@ -15,7 +19,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Calendar;
 
-public class LauncherEngine extends View implements SensorEventListener {
+public class LauncherEngine extends View implements SensorEventListener, LocationListener {
     private boolean isDragging = false;
     private float startX = 0;
     private int dragOffsetX = 0;
@@ -46,10 +50,16 @@ public class LauncherEngine extends View implements SensorEventListener {
     private int fpsCounter = 0;
     private int currentFps = 60;
 
-    // --- 真实传感器物理量 ---
+    // --- 真实传感器与硬件坐标物理量 ---
     private SensorManager sensorManager;
+    private LocationManager locationManager;
     private int liveSteps = 0;
     private int liveHeartRate = 0;
+    private float liveAzimuth = 0.0f;  // 指南针方位角
+    private float livePressure = 1013.25f; // 大气压强 (hPa)
+    private float liveAltitude = 0.0f; // 高度计
+    private float liveLat = 0.0f;      // 纬度
+    private float liveLon = 0.0f;      // 经度
 
     public LauncherEngine(Context context, int width, int height) {
         super(context);
@@ -65,12 +75,31 @@ public class LauncherEngine extends View implements SensorEventListener {
         loadMultiAssets(context);
 
         // 初始化传感器管道
+        initHardwareSensors(context);
+    }
+
+    private void initHardwareSensors(Context context) {
         sensorManager = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
         if (sensorManager != null) {
             Sensor stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
             if (stepSensor != null) sensorManager.registerListener(this, stepSensor, SensorManager.SENSOR_DELAY_UI);
             Sensor hrSensor = sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE);
             if (hrSensor != null) sensorManager.registerListener(this, hrSensor, SensorManager.SENSOR_DELAY_UI);
+            Sensor orientSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ORIENTATION);
+            if (orientSensor != null) sensorManager.registerListener(this, orientSensor, SensorManager.SENSOR_DELAY_UI);
+            Sensor pressureSensor = sensorManager.getDefaultSensor(Sensor.TYPE_PRESSURE);
+            if (pressureSensor != null) sensorManager.registerListener(this, pressureSensor, SensorManager.SENSOR_DELAY_UI);
+        }
+
+        locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+        if (locationManager != null) {
+            try {
+                if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                    locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000, 1, this);
+                }
+            } catch (SecurityException e) {
+                e.printStackTrace();
+            }
         }
     }
 
@@ -148,9 +177,12 @@ public class LauncherEngine extends View implements SensorEventListener {
         }
 
         // 3. 将手势、时间、FPS与传感器状态全量打包泵入 Rust (保留 ByteBuffer 确保图片自定义管线可用)
-        nativeUpdateEngineStateWithBuffer(isDragging, dragOffsetX, width, height, isRound, 
-                                          hour, minute, second, currentFps, liveSteps, liveHeartRate,
-                                          activeBuffer, activeSize);
+        nativeUpdateEngineStateWithBuffer(
+            isDragging, dragOffsetX, width, height, isRound, 
+            hour, minute, second, currentFps, liveSteps, liveHeartRate,
+            liveAzimuth, livePressure, liveAltitude, liveLat, liveLon,
+            activeBuffer, activeSize
+        );
         
         // 4. 渲染并冲刷显存
         nativeRenderFrame(frameBuffer, width, height, isRound);
@@ -160,7 +192,7 @@ public class LauncherEngine extends View implements SensorEventListener {
         screenBitmap.copyPixelsFromBuffer(reusableByteBuffer);
         canvas.drawBitmap(screenBitmap, 0, 0, null);
         
-        invalidate(); // 保持 60 帧高频自刷新
+        invalidate(); // 保持高频自刷新
     }
 
     @Override
@@ -203,10 +235,15 @@ public class LauncherEngine extends View implements SensorEventListener {
                 }
 
                 globalCalendar.setTimeInMillis(System.currentTimeMillis());
-                nativeUpdateEngineStateWithBuffer(false, dragOffsetX, width, height, false, 
-                        globalCalendar.get(Calendar.HOUR_OF_DAY), globalCalendar.get(Calendar.MINUTE), 
-                        globalCalendar.get(Calendar.SECOND), currentFps, liveSteps, liveHeartRate,
-                        activeBuffer, activeSize);
+                nativeUpdateEngineStateWithBuffer(
+                    false, dragOffsetX, width, height, false, 
+                    globalCalendar.get(Calendar.HOUR_OF_DAY), globalCalendar.get(Calendar.MINUTE), 
+                    globalCalendar.get(Calendar.SECOND), currentFps, liveSteps, liveHeartRate,
+                    liveAzimuth, livePressure, liveAltitude, liveLat, liveLon,
+                    activeBuffer, activeSize
+                );
+
+                nativeOnTouchUp(dragOffsetX);
 
                 if (Math.abs(dragOffsetX) < 10 && nativeGetSystemState() == 1) {
                     nativeOnCardClicked(calculateClickedCard(currentX));
@@ -225,19 +262,43 @@ public class LauncherEngine extends View implements SensorEventListener {
     // --- 传感器数据管道回调 ---
     @Override
     public void onSensorChanged(SensorEvent event) {
-        if (event.sensor.getType() == Sensor.TYPE_STEP_COUNTER) {
+        int type = event.sensor.getType();
+        if (type == Sensor.TYPE_STEP_COUNTER) {
             liveSteps = (int) event.values[0];
-        } else if (event.sensor.getType() == Sensor.TYPE_HEART_RATE) {
+        } else if (type == Sensor.TYPE_HEART_RATE) {
             liveHeartRate = (int) event.values[0];
+        } else if (type == Sensor.TYPE_ORIENTATION) {
+            liveAzimuth = event.values[0];
+        } else if (type == Sensor.TYPE_PRESSURE) {
+            livePressure = event.values[0];
+            liveAltitude = SensorManager.getAltitude(SensorManager.PRESSURE_STANDARD_ATMOSPHERE, livePressure);
         }
     }
 
     @Override public void onAccuracyChanged(Sensor sensor, int accuracy) {}
 
-    // --- 声明完美的全量系统参数级 JNI 映射 ---
-    private native void nativeUpdateEngineStateWithBuffer(boolean isDragging, int dragOffsetX, int width, int height, boolean isRound, 
-                                                int hour, int minute, int second, int fps, int steps, int hr, Object byteBuffer, int imgSize);
+    // --- GPS 定位数据管道回调 ---
+    @Override
+    public void onLocationChanged(Location loc) {
+        if (loc != null) {
+            liveLat = (float) loc.getLatitude();
+            liveLon = (float) loc.getLongitude();
+        }
+    }
+
+    @Override public void onStatusChanged(String provider, int status, Bundle extras) {}
+    @Override public void onProviderEnabled(String provider) {}
+    @Override public void onProviderDisabled(String provider) {}
+
+    // --- 声明完备的全量物理系统参数和 JNI 映射签名 ---
+    private native void nativeUpdateEngineStateWithBuffer(
+        boolean isDragging, int dragOffsetX, int width, int height, boolean isRound, 
+        int hour, int minute, int second, int fps, int steps, int hr,
+        float azimuth, float pressure, float altitude, float latitude, float longitude,
+        Object byteBuffer, int imgSize
+    );
     private native void nativeRenderFrame(short[] buffer, int width, int height, boolean isRound);
+    private native void nativeOnTouchUp(int finalDragX);
     private native void nativeOnCardClicked(int clickedId);
     private native int nativeGetSystemState();
     private native int nativeGetSelectedFaceId();

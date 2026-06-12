@@ -36,7 +36,9 @@ fn get_char_bits(c: char) -> [u8; 5] {
         'D' => [0b110, 0b101, 0b101, 0b101, 0b110],
         'E' => [0b111, 0b100, 0b111, 0b100, 0b111], // For SYSTEM, RATE, HEART
         'F' => [0b111, 0b100, 0b110, 0b100, 0b100],
+        'G' => [0b111, 0b100, 0b101, 0b101, 0b111],
         'H' => [0b101, 0b101, 0b111, 0b101, 0b101],
+        'I' => [0b111, 0b010, 0b010, 0b010, 0b111],
         'L' => [0b100, 0b100, 0b100, 0b100, 0b111], // For SLAB
         'M' => [0b101, 0b111, 0b101, 0b101, 0b101],
         'N' => [0b111, 0b101, 0b101, 0b101, 0b101], // For COUNTER (simplified 3x5)
@@ -46,6 +48,7 @@ fn get_char_bits(c: char) -> [u8; 5] {
         'S' => [0b111, 0b100, 0b111, 0b001, 0b111],
         'T' => [0b111, 0b010, 0b010, 0b010, 0b010],
         'U' => [0b101, 0b101, 0b101, 0b101, 0b111], // For COUNTER
+        'W' => [0b101, 0b101, 0b101, 0b111, 0b101],
         'X' => [0b101, 0b101, 0b010, 0b101, 0b101],
         'Y' => [0b101, 0b101, 0b010, 0b010, 0b010], // For SYS
         ':' => [0b000, 0b010, 0b000, 0b010, 0b000],
@@ -58,6 +61,7 @@ pub enum GlobalState {
     Launcher,
     Picker,
     AppDrawer,
+    CompassPanel,
 }
 
 struct GlobalEngine {
@@ -74,6 +78,14 @@ struct GlobalEngine {
     pub fps: u8,
     pub steps: u32,
     pub heart_rate: u8,
+    // --- 高级传感器与物理量状态状态 ---
+    pub azimuth: f32,
+    pub pressure: f32,
+    pub altitude: f32,
+    pub latitude: f32,
+    pub longitude: f32,
+    pub is_dragging: bool,
+    pub start_scroll_x: i32,
 }
 
 unsafe impl Send for GlobalEngine {}
@@ -92,6 +104,13 @@ static ENGINE: Mutex<GlobalEngine> = Mutex::new(GlobalEngine {
     fps: 60,
     steps: 0,
     heart_rate: 0,
+    azimuth: 0.0,
+    pressure: 1013.25,
+    altitude: 0.0,
+    latitude: 0.0,
+    longitude: 0.0,
+    is_dragging: false,
+    start_scroll_x: 0,
 });
 
 // 纯手工像素点阵基础绘制引擎
@@ -131,7 +150,7 @@ fn draw_string(buffer: &mut [u16], geo: &ScreenGeometry, text: &str, mut start_x
                         for sy in 0..scale {
                             for sx in 0..scale {
                                 let px = start_x + (x as u16 * scale) + sx;
-                                let py = start_y + (y as u16 * scale) + sy;
+                                  let py = start_y + (y as u16 * scale) + sy;
                                 if px < geo.width && py < geo.height {
                                     buffer[(py as u32 * geo.width as u32 + px as u32) as usize] = color;
                                 }
@@ -161,6 +180,11 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeUpdat
     fps: jint,
     steps: jint,
     hr: jint,
+    azimuth: jfloat,
+    pressure: jfloat,
+    altitude: jfloat,
+    latitude: jfloat,
+    longitude: jfloat,
     byte_buffer: jni::objects::JByteBuffer,
     img_size: jint,
 ) {
@@ -172,6 +196,11 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeUpdat
         engine.fps = fps as u8;
         engine.steps = steps as u32;
         engine.heart_rate = hr as u8;
+        engine.azimuth = azimuth;
+        engine.pressure = pressure;
+        engine.altitude = altitude;
+        engine.latitude = latitude;
+        engine.longitude = longitude;
         engine.custom_image_size = img_size as u32;
 
         if !byte_buffer.is_null() {
@@ -184,27 +213,77 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeUpdat
             engine.custom_image_address = std::ptr::null_mut();
         }
 
-        let drag = drag_offset_x as i16;
+        // 运用 1:1 无频偏动态跟随与弹性边界
+        if is_dragging != 0 {
+            if !engine.is_dragging {
+                engine.is_dragging = true;
+                engine.start_scroll_x = engine.picker.picker_scroll_x;
+            }
+            if engine.state == GlobalState::Picker {
+                let drag = drag_offset_x as i32;
+                let max_scroll = (24 - 1) * 160;
+                let mut target_scroll = engine.start_scroll_x - drag;
+                if target_scroll < 0 {
+                    target_scroll /= 2; // 弹性阻尼
+                } else if target_scroll > max_scroll {
+                    target_scroll = max_scroll + (target_scroll - max_scroll) / 2;
+                }
+                engine.picker.picker_scroll_x = target_scroll;
+            }
+        } else {
+            engine.is_dragging = false;
+        }
+    }
+}
 
-        if is_dragging == 0 {
-            match engine.state {
-                GlobalState::Launcher => {
-                    if drag > 60 {
-                        engine.state = GlobalState::Picker;
-                        engine.picker.picker_scroll_x = (engine.picker.selected_face_id as i32 - 1) * 160;
-                    } else if drag < -60 {
-                        engine.state = GlobalState::AppDrawer;
-                    }
-                }
-                GlobalState::Picker => {
-                    if drag < -50 { engine.state = GlobalState::Launcher; }
-                }
-                GlobalState::AppDrawer => {
-                    if drag > 50 { engine.state = GlobalState::Launcher; }
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeOnTouchUp(
+    _env: JNIEnv,
+    _class: JClass,
+    final_drag_x: jint,
+) {
+    if let Ok(mut engine) = ENGINE.lock() {
+        let drag = final_drag_x;
+        match engine.state {
+            GlobalState::Launcher => {
+                if drag > 35 {
+                    engine.state = GlobalState::Picker;
+                    engine.picker.picker_scroll_x = (engine.picker.selected_face_id as i32 - 1) * 160;
+                } else if drag < -35 {
+                    engine.state = GlobalState::AppDrawer;
                 }
             }
-            engine.last_drag_x = 0;
+            GlobalState::Picker => {
+                // 磁吸对齐（Snap-to-Page）网格算法
+                let current_scroll = engine.picker.picker_scroll_x;
+                let mut target_page = (current_scroll + 80) / 160;
+                if drag > 35 {
+                    target_page = (current_scroll - 30 + 80) / 160 - 1;
+                } else if drag < -35 {
+                    target_page = (current_scroll + 30 + 80) / 160 + 1;
+                }
+                target_page = target_page.clamp(0, 23);
+                engine.picker.picker_scroll_x = target_page * 160;
+                engine.picker.selected_face_id = (target_page as u8 + 1).clamp(1, 24);
+
+                if drag < -35 {
+                    engine.state = GlobalState::Launcher;
+                }
+            }
+            GlobalState::AppDrawer => {
+                if drag > 35 {
+                    engine.state = GlobalState::Launcher;
+                } else if drag < -35 {
+                    engine.state = GlobalState::CompassPanel; // 再次右滑解封【高级户外物理遥测仪表盘】
+                }
+            }
+            GlobalState::CompassPanel => {
+                if drag > 35 {
+                    engine.state = GlobalState::AppDrawer;
+                }
+            }
         }
+        engine.last_drag_x = 0;
     }
 }
 
@@ -232,6 +311,7 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeGetSy
             GlobalState::Launcher => 0,
             GlobalState::Picker => 1,
             GlobalState::AppDrawer => 2,
+            GlobalState::CompassPanel => 3,
         }
     } else { 0 }
 }
@@ -272,8 +352,6 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeRende
 
         match engine.state {
             GlobalState::Picker => {
-                let drag_x = engine.last_drag_x as i32;
-                engine.picker.picker_scroll_x -= drag_x / 3;
                 let _ = engine.picker.render_picker_view(frame_buffer, &geo, engine.custom_image_address as *const u16);
             }
             
@@ -289,23 +367,57 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeRende
 
                 // 利用栈分配的格式化机制，避开所有堆分配，直接直写文本标签
                 // 条目 1：实时帧率终端
-                draw_string(frame_buffer, &geo, "SYS FPS:", 25, 30, text_scale, text_color);
+                draw_string(frame_buffer, &geo, "SYS DIAGNOSTICS", 20, 20, text_scale, 0x07FF);
+                
+                draw_string(frame_buffer, &geo, "SYS FPS:", 20, 60, text_scale, text_color);
                 let fps_str = engine.fps.to_string();
-                draw_string(frame_buffer, &geo, &fps_str, 120, 30, text_scale, accent_color);
+                draw_string(frame_buffer, &geo, &fps_str, 120, 60, text_scale, accent_color);
 
                 // 条目 2：内存健康监控保护仓
-                draw_string(frame_buffer, &geo, "SLAB RAM: 64M", 25, 75, text_scale, text_color);
-                draw_string(frame_buffer, &geo, "STAT: STABLE", 25, 100, text_scale, 0x07FF); // 青色代表健康
+                draw_string(frame_buffer, &geo, "SLAB RAM: 64M", 20, 100, text_scale, text_color);
+                draw_string(frame_buffer, &geo, "STAT: STABLE", 20, 130, text_scale, 0x07E0);
 
                 // 条目 3：直接 JNI 核心传感器流
-                draw_string(frame_buffer, &geo, "STEP COUNTER", 25, 145, text_scale, text_color);
-                let steps_str = engine.steps.to_string();
-                draw_string(frame_buffer, &geo, &steps_str, 25, 170, text_scale, 0xFEE0); // 明黄色步数
-
-                draw_string(frame_buffer, &geo, "HEART RATE", 25, 215, text_scale, text_color);
+                draw_string(frame_buffer, &geo, "HR :", 20, 180, text_scale, text_color);
                 let mut hr_str = engine.heart_rate.to_string();
                 if engine.heart_rate == 0 { hr_str = "--".to_string(); }
-                draw_string(frame_buffer, &geo, &hr_str, 25, 240, text_scale, 0xF800); // 鲜红色心率
+                draw_string(frame_buffer, &geo, &hr_str, 70, 180, text_scale, 0xF800);
+
+                draw_string(frame_buffer, &geo, "STEP:", 20, 215, text_scale, text_color);
+                let steps_str = engine.steps.to_string();
+                draw_string(frame_buffer, &geo, &steps_str, 70, 215, text_scale, 0xFEE0);
+            }
+
+            GlobalState::CompassPanel => {
+                // =========================================================================
+                // 【Viewport 4：极限运动户外原生物理遥测仪表盘】
+                // =========================================================================
+                frame_buffer.fill(0x0841); // 深钛灰黑底色
+
+                draw_string(frame_buffer, &geo, "CRITICAL TELEMETRY", 20, 15, 2, 0xFFE0); // 金色抬头
+                
+                // 1. 指南针方位角 (Azimuth)
+                let dir_str = match engine.azimuth {
+                    a if a >= 337.5 || a < 22.5 => "N",
+                    a if a >= 22.5 && a < 67.5 => "NE",
+                    a if a >= 67.5 && a < 112.5 => "E",
+                    a if a >= 112.5 && a < 157.5 => "SE",
+                    a if a >= 157.5 && a < 202.5 => "S",
+                    a if a >= 202.5 && a < 247.5 => "SW",
+                    a if a >= 247.5 && a < 292.5 => "W",
+                    _ => "NW"
+                };
+                draw_string(frame_buffer, &geo, &format!("COMPASS: {}  {}", engine.azimuth as i32, dir_str), 15, 50, 2, 0x07E0);
+
+                // 2. 大气压计 (Barometer)
+                draw_string(frame_buffer, &geo, &format!("BARO  : {} HPA", engine.pressure as i32), 15, 85, 2, 0x07FF);
+
+                // 3. 高度计 (Altimeter)
+                draw_string(frame_buffer, &geo, &format!("ALTI  : {} M", engine.altitude as i32), 15, 120, 2, 0xF81F);
+
+                // 4 & 5. GPS 经纬度绝对坐标 (Latitude / Longitude)
+                draw_string(frame_buffer, &geo, &format!("LAT: {}", engine.latitude), 15, 160, 2, 0xFFFF);
+                draw_string(frame_buffer, &geo, &format!("LON: {}", engine.longitude), 15, 195, 2, 0xFFFF);
             }
 
             GlobalState::Launcher => {
@@ -319,66 +431,116 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeRende
 
                 match engine.picker.selected_face_id {
                     1 => {
-                        // 1. 【零拷贝直刷 AI 资产】：如果 Java 传来了图片指针，直接全屏复制到显存
-                        if !engine.custom_image_address.is_null() {
-                            let total_pixels = (geo.width as u32 * geo.height as u32) as usize;
-                            // Check for total_pixels * 2 because RGB565 takes 2 bytes per pixel
-                            if engine.custom_image_size as usize >= total_pixels * 2 {
-                                let src_slice = std::slice::from_raw_parts(engine.custom_image_address as *const u16, total_pixels);
-                                frame_buffer[..total_pixels].copy_from_slice(src_slice);
-                            }
-                        } else {
-                            // 资产未绑定时的安全降级底色（明黄色警告）
-                            frame_buffer.fill(0xFEE0);
+                        // 1. 铺设硬核深钛灰基底 (0x10A2)
+                        frame_buffer.fill(0x10A2); 
+                        let w = geo.width as u32;
+                        let h = geo.height as u32;
+
+                        // 2. 绘制战术十字刻度轨与雷达经纬扫描网格（纯像素级硬件几何直刷）
+                        // 绘制横向和纵向的微弱控制台辅助线 (暗灰色 0x3186)
+                        for x in 0..geo.width {
+                            let idx_h = ((geo.height / 2) as u32 * w + x as u32) as usize;
+                            if x % 4 != 0 && idx_h < frame_buffer.len() { frame_buffer[idx_h] = 0x3186; }
+                        }
+                        for y in 0..geo.height {
+                            let idx_v = (y as u32 * w + (geo.width / 2) as u32) as usize;
+                            if y % 4 != 0 && idx_v < frame_buffer.len() { frame_buffer[idx_v] = 0x3186; }
                         }
 
+                        // 3. 绘制外围硬核圆环/方形边界荧光装饰条 (发光翠绿 0x07E0)
+                        for i in 8..14 {
+                            // 顶部与底部边缘战术线条
+                            for x in 15..(geo.width - 15) {
+                                if (i * w + x as u32) < frame_buffer.len() as u32 {
+                                    frame_buffer[(i * w + x as u32) as usize] = 0x03E0; // 暗绿科技条
+                                }
+                                if ((geo.height as u32 - i - 1) * w + x as u32) < frame_buffer.len() as u32 {
+                                    frame_buffer[((geo.height as u32 - i - 1) * w + x as u32) as usize] = 0x03E0;
+                                }
+                            }
+                        }
+
+                        // 4. 重构核心数字时钟：手绘具有 CRT 荧光管残影质感的高清时间
                         let center_x = geo.width / 2;
                         let center_y = geo.height / 2;
                         
-                        // 【完全动态咬合系统时间 + 冒号闪烁】
-                        let digit_scale = 8;
-                        let base_y = center_y - 20;
+                        let digit_scale = 6;     // 字体放大系数
+                        let base_y = center_y - 35; // 居中垂直对齐点
                         
-                        draw_digit(frame_buffer, &geo, h_high, center_x - 70, base_y, digit_scale, 0xFFFF);
-                        draw_digit(frame_buffer, &geo, h_low, center_x - 35, base_y, digit_scale, 0xFFFF);
+                        // 【CRT 物理残影特效】：先在右下方 2 像素位置绘制暗色阴影，再覆盖高亮前景色
+                        let shadow_color = 0x0180; // 深暗绿残影
+                        let neon_green = 0x07E0;   // 荧光翠绿
+                        let neon_red = 0xF800;     // 警报荧光红
+
+                        // 绘制小时阴影与前景
+                        draw_digit(frame_buffer, &geo, h_high, center_x - 73, base_y + 2, digit_scale, shadow_color);
+                        draw_digit(frame_buffer, &geo, h_high, center_x - 75, base_y, digit_scale, neon_green);
                         
-                        // 动态冒号：根据真实秒数的奇偶性决定是否点亮，达成沉浸式闪烁
+                        draw_digit(frame_buffer, &geo, h_low, center_x - 43, base_y + 2, digit_scale, shadow_color);
+                        draw_digit(frame_buffer, &geo, h_low, center_x - 45, base_y, digit_scale, neon_green);
+
+                        // 5. 闪烁的双重战术冒号（随秒针高频震荡）
                         if engine.second % 2 == 0 {
-                            for py in (center_y-10)..(center_y-5) {
-                                for px in (center_x-2)..(center_x+2) {
-                                    if let Some(pixel) = frame_buffer.get_mut((py as u32 * geo.width as u32 + px as u32) as usize) {
-                                        *pixel = 0xFFFF;
+                            // 上冒号点
+                            for py in (center_y - 20)..(center_y - 14) {
+                                for px in (center_x - 3)..(center_x + 3) {
+                                    if (py as u32 * w + px as u32) < frame_buffer.len() as u32 {
+                                        frame_buffer[(py as u32 * w + px as u32) as usize] = neon_red;
                                     }
                                 }
                             }
-                            for py in (center_y+5)..(center_y+10) {
-                                for px in (center_x-2)..(center_x+2) {
-                                    if let Some(pixel) = frame_buffer.get_mut((py as u32 * geo.width as u32 + px as u32) as usize) {
-                                        *pixel = 0xFFFF;
+                            // 下冒号点
+                            for py in (center_y + 4)..(center_y + 10) {
+                                for px in (center_x - 3)..(center_x + 3) {
+                                    if (py as u32 * w + px as u32) < frame_buffer.len() as u32 {
+                                        frame_buffer[(py as u32 * w + px as u32) as usize] = neon_red;
                                     }
                                 }
                             }
                         }
+
+                        // 绘制分钟阴影与前景
+                        draw_digit(frame_buffer, &geo, m_high, center_x + 17, base_y + 2, digit_scale, shadow_color);
+                        draw_digit(frame_buffer, &geo, m_high, center_x + 15, base_y, digit_scale, neon_green);
                         
-                        draw_digit(frame_buffer, &geo, m_high, center_x + 15, base_y, digit_scale, 0xFFFF);
-                        draw_digit(frame_buffer, &geo, m_low, center_x + 50, base_y, digit_scale, 0xFFFF);
+                        draw_digit(frame_buffer, &geo, m_low, center_x + 47, base_y + 2, digit_scale, shadow_color);
+                        draw_digit(frame_buffer, &geo, m_low, center_x + 45, base_y, digit_scale, neon_green);
+
+                        // 6. 顶层遥测看板：将找回来的原生物理传感器无损嵌入 1 号主界面
+                        // 顶部左侧：高度计数据 (ALTI)；顶部右侧：实时气压 (BARO)
+                        let alti_text = format!("ALT {}M", engine.altitude as i32);
+                        let baro_text = format!("BARO {}HP", engine.pressure as i32);
+                        draw_string(frame_buffer, &geo, &alti_text, 20, 20, 1, 0xFFFF); // 纯白高亮
+                        draw_string(frame_buffer, &geo, &baro_text, geo.width - 95, 20, 1, 0x07FF); // 冰蓝点阵
+
+                        // 底部左侧：步数健康流 (STEP)；底部右侧：高频心率监测 (HR)
+                        let step_text = format!("STP {}", engine.steps);
+                        let hr_text = format!("HR {}BPM", engine.heart_rate);
+                        draw_string(frame_buffer, &geo, &step_text, 20, geo.height - 30, 1, 0xFFE0); // 琥珀金
+                        draw_string(frame_buffer, &geo, &hr_text, geo.width - 85, geo.height - 30, 1, 0xF81F); // 霓虹紫
+
+                        // 底部中央：GPS 战术罗盘精简挂件（显示当前方位角）
+                        let azi_text = format!("{:03} DEG", engine.azimuth as i32);
+                        draw_string(frame_buffer, &geo, &azi_text, center_x - 28, geo.height - 45, 1, 0xFFFF);
                     }
                     2 => {
-                        // 2号表盘：在顶部画一行精美的绿色系统心率数据监控文本
-                        let hr_text = format!("HR: {}", engine.heart_rate);
-                        draw_string(frame_buffer, &geo, &hr_text, geo.width / 2 - 30, 20, 2, 0x07E0);
-                        
-                        let w = geo.width as u32;
-                        for y in 40..60 {
-                            for x in (geo.width/2-15)..(geo.width/2+15) {
-                                frame_buffer[(y * w + x as u32) as usize] = 0xF800;
-                            }
-                        }
+                        frame_buffer.fill(0x2000); // 罗马数字优雅红盘
+                        draw_string(frame_buffer, &geo, "XII", geo.width / 2 - 12, 15, 2, 0xF800);
+                        draw_string(frame_buffer, &geo, "III", geo.width - 45, geo.height / 2 - 5, 2, 0xF800);
+                        draw_string(frame_buffer, &geo, "VI", geo.width / 2 - 8, geo.height - 30, 2, 0xF800);
+                        draw_string(frame_buffer, &geo, "IX", 15, geo.height / 2 - 5, 2, 0xF800);
+
+                        draw_string(frame_buffer, &geo, &format!("{:02}:{:02}", engine.hour, engine.minute), geo.width / 2 - 40, geo.height / 2 - 15, 3, 0xFFFF);
+                        // 底部展示实时心率
+                        let hr_text = format!("HR: {}", if engine.heart_rate == 0 { "--".to_string() } else { engine.heart_rate.to_string() });
+                        draw_string(frame_buffer, &geo, &hr_text, geo.width / 2 - 30, geo.height / 2 + 25, 2, 0x07E0);
                     }
                     3 => {
-                        // 3号表盘：在底部动态缩放绿色步数能量条
+                        frame_buffer.fill(0x0180); // 运动极简盘
+                        draw_string(frame_buffer, &geo, &format!("{:02}:{:02}", engine.hour, engine.minute), geo.width / 2 - 50, geo.height / 2 - 30, 4, 0xFFFF);
+                        draw_string(frame_buffer, &geo, &format!("STEP {}", engine.steps), geo.width / 2 - 40, geo.height / 2 + 15, 2, 0x07E0);
+
                         let start_y = (geo.height - 35) as u32;
-                        // 依据真实步数做个简易满载百分比映射，动态拉伸能量条长度
                         let bar_width = std::cmp::min(geo.width - 60, (engine.steps % 10000) as u16 / 40);
                         for y in start_y..(start_y + 8) {
                             for x in 30..(30 + bar_width) {
@@ -488,7 +650,6 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeRende
                                 frame_buffer[..total_pixels].copy_from_slice(src_slice);
                             }
                         } else {
-                            // 提示未绑定资产时的安全高亮黄色警告屏
                             frame_buffer.fill(0xFEE0);
                         }
                     }
