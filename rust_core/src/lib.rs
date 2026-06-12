@@ -39,6 +39,7 @@ fn get_char_bits(c: char) -> [u8; 5] {
         'G' => [0b111, 0b100, 0b101, 0b101, 0b111],
         'H' => [0b101, 0b101, 0b111, 0b101, 0b101],
         'I' => [0b111, 0b010, 0b010, 0b010, 0b111],
+        'J' => [0b001, 0b001, 0b001, 0b101, 0b111],
         'L' => [0b100, 0b100, 0b100, 0b100, 0b111], // For SLAB
         'M' => [0b101, 0b111, 0b101, 0b101, 0b101],
         'N' => [0b111, 0b101, 0b101, 0b101, 0b101], // For COUNTER (simplified 3x5)
@@ -48,6 +49,7 @@ fn get_char_bits(c: char) -> [u8; 5] {
         'S' => [0b111, 0b100, 0b111, 0b001, 0b111],
         'T' => [0b111, 0b010, 0b010, 0b010, 0b010],
         'U' => [0b101, 0b101, 0b101, 0b101, 0b111], // For COUNTER
+        'V' => [0b101, 0b101, 0b101, 0b010, 0b010],
         'W' => [0b101, 0b101, 0b101, 0b111, 0b101],
         'X' => [0b101, 0b101, 0b010, 0b101, 0b101],
         'Y' => [0b101, 0b101, 0b010, 0b010, 0b010], // For SYS
@@ -524,16 +526,95 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeRende
                         draw_string(frame_buffer, &geo, &azi_text, center_x - 28, geo.height - 45, 1, 0xFFFF);
                     }
                     2 => {
-                        frame_buffer.fill(0x2000); // 罗马数字优雅红盘
-                        draw_string(frame_buffer, &geo, "XII", geo.width / 2 - 12, 15, 2, 0xF800);
-                        draw_string(frame_buffer, &geo, "III", geo.width - 45, geo.height / 2 - 5, 2, 0xF800);
-                        draw_string(frame_buffer, &geo, "VI", geo.width / 2 - 8, geo.height - 30, 2, 0xF800);
-                        draw_string(frame_buffer, &geo, "IX", 15, geo.height / 2 - 5, 2, 0xF800);
+                        let w = geo.width as u32;
+                        let h = geo.height as u32;
+                        let center_x = geo.width as i32 / 2;
+                        let center_y = geo.height as i32 / 2;
+                        
+                        // 1. 刷写高质感珐琅白底色 (0xF7BE，微暗的复古纸质白，比死白更有胶片质感)
+                        frame_buffer.fill(0xF7BE);
 
-                        draw_string(frame_buffer, &geo, &format!("{:02}:{:02}", engine.hour, engine.minute), geo.width / 2 - 40, geo.height / 2 - 15, 3, 0xFFFF);
-                        // 底部展示实时心率
-                        let hr_text = format!("HR: {}", if engine.heart_rate == 0 { "--".to_string() } else { engine.heart_rate.to_string() });
-                        draw_string(frame_buffer, &geo, &hr_text, geo.width / 2 - 30, geo.height / 2 + 25, 2, 0x07E0);
+                        // 2. 绘制精钢外表圈与轨道式分钟微刻度
+                        let outer_r = (geo.width as i32 / 2) - 8;
+                        for angle_deg in (0..360).step_by(6) { // 每 6 度一格（60个分格刻度）
+                            let rad = (angle_deg as f32).to_radians();
+                            let cos_f = rad.cos();
+                            let sin_f = rad.sin();
+                            
+                            let start_len = if angle_deg % 30 == 0 { 10 } else { 5 }; // 整点刻度加长
+                            let x1 = center_x + (cos_f * (outer_r - start_len) as f32) as i32;
+                            let y1 = center_y + (sin_f * (outer_r - start_len) as f32) as i32;
+                            let x2 = center_x + (cos_f * outer_r as f32) as i32;
+                            let y2 = center_y + (sin_f * outer_r as f32) as i32;
+                            
+                            // 简易两点连线算法（点阵描线）刷出刻度圈
+                            draw_line(frame_buffer, w, x1, y1, x2, y2, 0x2104); // 机械碳黑刻度
+                        }
+
+                        // 3. 绘制古典罗马数字时标 (XII, III, VI, IX) 到指定物理网格位置
+                        draw_string(frame_buffer, &geo, "XII", (center_x - 12) as u16, 18, 2, 0x18C3);
+                        draw_string(frame_buffer, &geo, "III", (geo.width - 32) as u16, (center_y - 6) as u16, 2, 0x18C3);
+                        draw_string(frame_buffer, &geo, "IX", 16, (center_y - 6) as u16, 2, 0x18C3);
+                        // 6点钟位置留给独立小秒盘，所以 VI 稍微往上提或者精简掉，这里我们保留微缩版
+                        draw_string(frame_buffer, &geo, "VI", (center_x - 6) as u16, (geo.height - 45) as u16, 2, 0x18C3);
+
+                        // 4. 高级天文台功能：嵌入 历法视窗（月份、日期、星期）
+                        // 为了美观，我们把它优雅地平铺在 12点 (XII) 下方的中轴线上
+                        // 硬编码示例：使用你当前的日期与星期（例如 JUN 13 SAT）
+                        // 实际项目中你可以通过 Java 侧传入的 Calendar 字段自由拼接 format
+                        let calendar_text = "JUN 13 SAT"; 
+                        draw_string(frame_buffer, &geo, calendar_text, (center_x - 38) as u16, (center_y - 40) as u16, 1, 0x4208); // 优雅灰蓝点阵字
+
+                        // 5. 独立机械小秒盘 (Sub-dial) 渲染算法 —— 复刻原图 6 点钟上方精髓
+                        let sub_center_x = center_x;
+                        let sub_center_y = center_y + 45;
+                        let sub_r = 22;
+                        // 绘制小秒盘微型圆形轨道圈
+                        for deg in (0..360).step_by(15) {
+                            let r_rad = (deg as f32).to_radians();
+                            let sx = sub_center_x + (r_rad.cos() * sub_r as f32) as i32;
+                            let sy = sub_center_y + (r_rad.sin() * sub_r as f32) as i32;
+                            if sx >= 0 && sx < geo.width as i32 && sy >= 0 && sy < geo.height as i32 {
+                                frame_buffer[(sy as u32 * w + sx as u32) as usize] = 0x7BEF; // 细密内圈线
+                            }
+                        }
+                        // 计算并绘制复古小秒针
+                        let sec_rad = ((engine.second as f32 * 6.0) - 90.0).to_radians(); // 1秒走6度，-90度修正北方
+                        let sec_x = sub_center_x + (sec_rad.cos() * (sub_r - 3) as f32) as i32;
+                        let sec_y = sub_center_y + (sec_rad.sin() * (sub_r - 3) as f32) as i32;
+                        draw_line(frame_buffer, w, sub_center_x, sub_center_y, sec_x, sec_y, 0xF800); // 艳红细秒针，画龙点睛
+
+                        // 6. 核心机械时针与分针算法（经典的桃形/柳叶指针物理骨架）
+                        // 分针计算 (Minute Hand)
+                        let min_deg = (engine.minute as f32 * 6.0) + (engine.second as f32 * 0.1) - 90.0;
+                        let min_rad = min_deg.to_radians();
+                        let min_hand_len = (outer_r - 20) as f32;
+                        let mx = center_x + (min_rad.cos() * min_hand_len) as i32;
+                        let my = center_y + (min_rad.sin() * min_hand_len) as i32;
+                        // 绘制加粗分针（古典黑 0x0000）
+                        draw_line_thick(frame_buffer, w, center_x, center_y, mx, my, 0x0000, 2);
+
+                        // 时针计算 (Hour Hand)
+                        let hr_deg = ((engine.hour % 12) as f32 * 30.0) + (engine.minute as f32 * 0.5) - 90.0;
+                        let hr_rad = hr_deg.to_radians();
+                        let hr_hand_len = (outer_r - 40) as f32;
+                        let hx = center_x + (hr_rad.cos() * hr_hand_len) as i32;
+                        let hy = center_y + (hr_rad.sin() * hr_hand_len) as i32;
+                        // 绘制更粗的时针
+                        draw_line_thick(frame_buffer, w, center_x, center_y, hx, hy, 0x0000, 3);
+
+                        // 7. 轴心圆芯（中心金黄色铆钉，完美复刻原图轴心细节）
+                        for dy in -2..=2 {
+                            for dx in -2..=2 {
+                                if dx*dx + dy*dy <= 5 {
+                                    let px = (center_x + dx) as u32;
+                                    let py = (center_y + dy) as u32;
+                                    if px < geo.width as u32 && py < geo.height as u32 {
+                                        frame_buffer[(py * w + px) as usize] = 0xCE60; // 复古古铜金
+                                    }
+                                }
+                            }
+                        }
                     }
                     3 => {
                         frame_buffer.fill(0x0180); // 运动极简盘
@@ -676,3 +757,28 @@ pub unsafe extern "C" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeRende
         env.set_short_array_region(&j_frame_buffer, 0, &engine.render_buffer).unwrap();
     }
 }
+
+// 基础像素点阵连线算法
+fn draw_line(buffer: &mut [u16], w: u32, mut x0: i32, mut y0: i32, x1: i32, y1: i32, color: u16) {
+    let dx = (x1 - x0).abs(); let dy = (y1 - y0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 }; let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx - dy;
+    loop {
+        if x0 >= 0 && x0 < w as i32 && y0 >= 0 && y0 < (buffer.len() as i32 / w as i32) {
+            buffer[(y0 as u32 * w + x0 as u32) as usize] = color;
+        }
+        if x0 == x1 && y0 == y1 { break; }
+        let e2 = 2 * err;
+        if e2 > -dy { err -= dy; x0 += sx; }
+        if e2 < dx { err += dx; y0 += sy; }
+    }
+}
+
+// 粗线段绘制函数（用于时针分针的厚重机械感）
+fn draw_line_thick(buffer: &mut [u16], w: u32, x0: i32, y0: i32, x1: i32, y1: i32, color: u16, thickness: i32) {
+    for t in -(thickness / 2)..=(thickness / 2) {
+        draw_line(buffer, w, x0 + t, y0, x1 + t, y1, color);
+        draw_line(buffer, w, x0, y0 + t, x1, y1 + t, color);
+    }
+}
+
