@@ -7,7 +7,7 @@ pub mod picker;
 pub mod watchface_pool;
 
 use jni::JNIEnv;
-use jni::objects::{JClass, JShortArray, JObject};
+use jni::objects::{JClass, JShortArray};
 use jni::sys::{jboolean, jint};
 use geometry::{ScreenGeometry, ScreenShape, AdaptiveRenderer};
 use picker::WatchFacePicker;
