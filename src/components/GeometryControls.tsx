@@ -170,18 +170,25 @@ export function GeometryControls({ settings, onChange, lang }: GeometryControlsP
           <div className="flex items-center justify-between text-xs bg-slate-50 p-2.5 rounded-lg border border-slate-100">
             <span className="text-slate-500 font-medium">State Machine</span>
             <span className={`font-mono px-2 py-0.5 rounded text-[10px] font-bold ${
-              settings.dragOffsetX < 0 
+              settings.dragOffsetX !== 0 
                 ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' 
                 : 'bg-slate-200 text-slate-600 border border-slate-300'
             }`}>
-              {settings.dragOffsetX < 0 ? t.dragActive : t.dragIdle}
+              {settings.dragOffsetX !== 0 ? t.dragActive : t.dragIdle}
             </span>
           </div>
 
-          {settings.dragOffsetX < 0 && (
-            <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 p-2.5 rounded-lg">
+          {settings.dragOffsetX < -30 && (
+            <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 p-2.5 rounded-lg animate-in fade-in zoom-in-95 duration-150">
               <Terminal className="w-4 h-4 shrink-0" />
               <span>{t.activeDrawer}</span>
+            </div>
+          )}
+
+          {settings.dragOffsetX > 30 && (
+            <div className="flex items-center gap-2 text-xs text-blue-700 bg-blue-50 border border-blue-200 p-2.5 rounded-lg animate-in fade-in zoom-in-150 duration-150">
+              <Monitor className="w-4 h-4 shrink-0" />
+              <span>{t.activeWatchface} Picker</span>
             </div>
           )}
 

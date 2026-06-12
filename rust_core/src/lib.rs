@@ -5,7 +5,7 @@ pub mod watchface_pool;
 
 use jni::JNIEnv;
 use jni::objects::{JClass, JShortArray};
-use jni::sys::{jboolean, jint, jlong};
+use jni::sys::{jboolean, jint, jlong, jfloat};
 use geometry::{ScreenGeometry, ScreenShape, TouchState, AdaptiveRenderer};
 use picker::{WatchFacePicker, SystemState as PickerState};
 use std::sync::Mutex;
@@ -24,6 +24,7 @@ struct GlobalEngine {
     pub custom_image_ptr: *const u16,
     pub custom_image_size: u32,
     pub last_drag_x: i16, // 记录持续手势物理量
+    pub base_scroll_x: i32, // 记录拖拽开始时的起始滚动距离
 }
 
 // 核心解法：显式为 GlobalEngine 赋予 Send 与 Sync 圣衣，消除 E0277 跨线程断言
@@ -36,6 +37,7 @@ static ENGINE: Mutex<GlobalEngine> = Mutex::new(GlobalEngine {
     custom_image_ptr: std::ptr::null(),
     custom_image_size: 0,
     last_drag_x: 0,
+    base_scroll_x: 0,
 });
 
 // =========================================================================
@@ -68,21 +70,27 @@ pub unsafe extern "system" fn Java_com_oudanobu_chronoxide_LauncherEngine_native
 
         let drag = drag_offset_x as i16;
 
-        // 仅在手势释放（ACTION_UP）或达到大阈值时判定状态跳转
         if is_dragging != 0 {
             match engine.state {
                 GlobalState::Launcher => {
                     if drag > 80 {
                         // 【右滑】：进入表盘选择界面
                         engine.state = GlobalState::Picker;
-                        engine.picker.picker_scroll_x = (engine.picker.selected_face_id as i32 - 1) * 160;
+                        let initial_scroll = (engine.picker.selected_face_id as i32 - 1) * 160;
+                        engine.picker.picker_scroll_x = initial_scroll;
+                        engine.base_scroll_x = initial_scroll;
                     } else if drag < -80 {
                         // 【左滑】：进入应用抽屉
                         engine.state = GlobalState::AppDrawer;
                     }
                 }
                 GlobalState::Picker => {
-                    // 在选择器内，正向右滑可以滑回桌面
+                    // 表盘选择器横向平滑滚动滚动轴：picker_scroll_x = base_scroll_x - delta_x
+                    let target_scroll = engine.base_scroll_x - drag_offset_x as i32;
+                    let max_scroll = (24 - 1) * 160;
+                    engine.picker.picker_scroll_x = target_scroll.clamp(0, max_scroll);
+
+                    // 在选择器内拖拽足够距离也可以滑回桌面
                     if drag < -150 { engine.state = GlobalState::Launcher; }
                 }
                 GlobalState::AppDrawer => {
@@ -90,6 +98,9 @@ pub unsafe extern "system" fn Java_com_oudanobu_chronoxide_LauncherEngine_native
                     if drag > 150 { engine.state = GlobalState::Launcher; }
                 }
             }
+        } else {
+            // 手势释放，重置及沉淀基底滚动点
+            engine.base_scroll_x = engine.picker.picker_scroll_x;
         }
     }
 }
@@ -98,12 +109,28 @@ pub unsafe extern "system" fn Java_com_oudanobu_chronoxide_LauncherEngine_native
 pub unsafe extern "system" fn Java_com_oudanobu_chronoxide_LauncherEngine_nativeOnCardClicked(
     _env: JNIEnv,
     _class: JClass,
-    clicked_id: jint,
+    click_x: jfloat,
+    click_y: jfloat,
 ) {
     if let Ok(mut engine) = ENGINE.lock() {
-        if clicked_id >= 1 && clicked_id <= 24 {
-            engine.picker.selected_face_id = clicked_id as u8;
-            engine.state = GlobalState::Launcher; // 选完表盘，切回主界面
+        if engine.state == GlobalState::Picker {
+            // 物理限定：检查 y 轴是否点在中间卡片渲染块区间 (40..geo.height-40)
+            if click_y >= 40.0 {
+                let scroll_x = engine.picker.picker_scroll_x;
+                let relative_x = click_x as i32 + scroll_x - 40;
+                if relative_x >= 0 {
+                    let card_idx = relative_x / 160;
+                    let offset_in_card = relative_x % 160;
+                    // 卡片物理跨度为 120 像素，超出 120 像素落在卡片间隔 40px 内无效
+                    if offset_in_card < 120 {
+                        let clicked_id = card_idx + 1;
+                        if clicked_id >= 1 && clicked_id <= 24 {
+                            engine.picker.selected_face_id = clicked_id as u8;
+                            engine.state = GlobalState::Launcher; // 切回主界面
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -153,10 +180,7 @@ pub unsafe extern "system" fn Java_com_oudanobu_chronoxide_LauncherEngine_native
         match engine.state {
             GlobalState::Picker => {
                 // 【场景 1】：右滑叫出的 1-24 号表盘传送带选择界面
-                // 允许通过轻微拖拽手势微调卡片滚动轴
-                let mut temp_picker = engine.picker;
-                temp_picker.picker_scroll_x -= engine.last_drag_x as i32 / 5;
-                let _ = temp_picker.render_picker_view(frame_buffer, &geo, engine.custom_image_ptr);
+                let _ = engine.picker.render_picker_view(frame_buffer, &geo, engine.custom_image_ptr);
             }
             
             GlobalState::AppDrawer => {

@@ -12,8 +12,10 @@ public class LauncherEngine extends View {
     private float startX = 0;
     private int dragOffsetX = 0;
     
-    // 动态显存缓冲区
+    // 动态显存与字节流包装零拷贝复用缓冲区
     private short[] frameBuffer;
+    private byte[] byteBufferArray;
+    private ByteBuffer reusableByteBuffer;
     private Bitmap screenBitmap;
     private int width;
     private int height;
@@ -23,6 +25,8 @@ public class LauncherEngine extends View {
         this.width = width;
         this.height = height;
         this.frameBuffer = new short[width * height];
+        this.byteBufferArray = new byte[width * height * 2];
+        this.reusableByteBuffer = ByteBuffer.wrap(byteBufferArray);
         // 创建直接映射显存的 RGB_565 Bitmap
         this.screenBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565);
     }
@@ -42,8 +46,10 @@ public class LauncherEngine extends View {
         // 3. 让 Rust 直接向我们的 frameBuffer 数组写像素
         nativeRenderFrame(frameBuffer, width, height, isRound);
         
-        // 4. 将短整型像素数组高速复制回 Bitmap
-        screenBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(shortToByteArray(frameBuffer)));
+        // 4. 将短整型像素数流高速写入并且复用 ByteBuffer
+        shortToByteArray(frameBuffer, byteBufferArray);
+        reusableByteBuffer.rewind();
+        screenBitmap.copyPixelsFromBuffer(reusableByteBuffer);
         
         // 5. 直写屏幕 Canvas
         canvas.drawBitmap(screenBitmap, 0, 0, null);
@@ -68,13 +74,12 @@ public class LauncherEngine extends View {
                 
             case MotionEvent.ACTION_UP:
                 isDragging = false;
-                // 检测点击事件：如果在选择器（Picker）状态下，计算点击了哪个卡片
+                // 检测点击事件：如果在选择器（Picker）状态下，点击直接委托给 Rust 算
                 if (Math.abs(dragOffsetX) < 10) {
                     int state = nativeGetSystemState();
                     if (state == 1) { // 1 代表 SystemState::Picker
-                        // 根据点击的屏幕 X 坐标，简单换算点击了哪个表盘卡片
-                        int clickedCardId = calculateClickedCard(event.getX());
-                        nativeOnCardClicked(clickedCardId);
+                        // 将原始 X、Y 传入 Rust，由 Rust 精确定位选定卡片 ID，降低状态不一致几率
+                        nativeOnCardClicked(event.getX(), event.getY());
                     }
                 }
                 dragOffsetX = 0;
@@ -83,24 +88,17 @@ public class LauncherEngine extends View {
         return true;
     }
 
-    private int calculateClickedCard(float x) {
-        // 简单的微缩卡片点击落点换算逻辑（根据我们 Rust 里每 160 像素一个卡片的设计）
-        return 1; // 默认返回 1，你可以根据你的 picker_scroll_x 进一步精确计算
-    }
-
-    private byte[] shortToByteArray(short[] src) {
-        byte[] dest = new byte[src.length * 2];
+    private void shortToByteArray(short[] src, byte[] dest) {
         for (int i = 0; i < src.length; i++) {
             dest[i * 2] = (byte) (src[i] & 0xFF);
             dest[i * 2 + 1] = (byte) ((src[i] >> 8) & 0xFF);
         }
-        return dest;
     }
 
     // --- 声明我们在 Rust 中实现的 JNI 映射 ---
     private native void nativeUpdateEngineState(boolean isDragging, int dragOffsetX, int width, int height, boolean isRound, long imgPtr, int imgSize);
     private native void nativeRenderFrame(short[] buffer, int width, int height, boolean isRound);
-    private native void nativeOnCardClicked(int clickedId);
+    private native void nativeOnCardClicked(float clickX, float clickY);
     private native int nativeGetSystemState();
 
     static {

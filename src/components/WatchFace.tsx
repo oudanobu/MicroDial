@@ -34,22 +34,43 @@ export function WatchFace({ sensorData, lang, geometry, onGeometryChange, active
     : time.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 
   // Calculate sliding frame viewports using the exact Rust algorithms requested:
-  // let (face_x, drawer_x) = calculate_drawer_viewport(&geo, &touch);
   const maxOffset = -geometry.resolution;
   const clampedOffset = Math.max(maxOffset, Math.min(geometry.resolution, geometry.dragOffsetX));
   
-  // App logic: Launcher mode vs Picker mode
-  const [systemState, setSystemState] = useState<'Launcher' | 'Picker'>('Launcher');
+  // App logic: Launcher mode vs Picker mode (Right Swipe) vs AppDrawer mode (Left Swipe)
+  const [systemState, setSystemState] = useState<'Launcher' | 'Picker' | 'AppDrawer'>('Launcher');
   const [pickerScrollX, setPickerScrollX] = useState(0);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // If we are dragging left, the original dial stays at top level and moves left.
-  const faceX = systemState === 'Launcher' ? clampedOffset : -geometry.resolution;
-  
-  // The picker starts at full offset right, and slides in
-  const pickerX = systemState === 'Launcher' ? clampedOffset + geometry.resolution : 0;
-  
-  // Hide the next incoming screen we added previously. Let's adapt it to the picker.
-  const nextFaceX = -geometry.resolution;
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 2500);
+  };
+
+  // Three-panel physical slide layout matching smartwatch conventions:
+  let faceX: number = 0;
+  let pickerX: number = -geometry.resolution;
+  let drawerX: number = geometry.resolution;
+
+  if (systemState === 'Launcher') {
+    faceX = clampedOffset;
+    pickerX = clampedOffset - geometry.resolution; // Picker comes in from left on Right Swipe (offset > 0)
+    drawerX = clampedOffset + geometry.resolution; // AppDrawer comes in from right on Left Swipe (offset < 0)
+  } else if (systemState === 'Picker') {
+    // Picker is centered. Swiping right slides it out to reveal dial underneath
+    const slideOffset = Math.max(0, geometry.dragOffsetX); 
+    pickerX = slideOffset;
+    faceX = slideOffset + geometry.resolution;
+    drawerX = slideOffset + geometry.resolution * 2;
+  } else if (systemState === 'AppDrawer') {
+    // AppDrawer is centered. Swiping left slides it out to reveal dial underneath
+    const slideOffset = Math.max(0, geometry.dragOffsetX); // slide right to exit
+    drawerX = slideOffset;
+    faceX = slideOffset - geometry.resolution;
+    pickerX = slideOffset - geometry.resolution * 2;
+  }
 
   // Determine watch face theme coloring
   let bgClass = "bg-slate-950"; // default ID 0
@@ -98,7 +119,7 @@ export function WatchFace({ sensorData, lang, geometry, onGeometryChange, active
       onFaceChange(id);
     }
     setSystemState('Launcher');
-    // Vibration effect simulation handled in real environment
+    showToast(lang === 'zh' ? `已激活 Rust 驱动 ${id} 号` : `Loaded Watchface Driver ${id}`);
     if (navigator.vibrate) {
       navigator.vibrate(20);
     }
@@ -108,10 +129,18 @@ export function WatchFace({ sensorData, lang, geometry, onGeometryChange, active
 
   const handlePointerDown = (clientX: number) => {
     if (!onGeometryChange) return;
+    let dragStartCalculated = clientX;
+    if (systemState === 'Launcher') {
+      dragStartCalculated = clientX - geometry.dragOffsetX;
+    } else if (systemState === 'Picker') {
+      dragStartCalculated = clientX - pickerScrollX;
+    } else if (systemState === 'AppDrawer') {
+      dragStartCalculated = clientX - geometry.dragOffsetX;
+    }
     onGeometryChange({
       ...geometry,
       isDragging: true,
-      dragStartX: systemState === 'Launcher' ? clientX - geometry.dragOffsetX : clientX - pickerScrollX
+      dragStartX: dragStartCalculated
     });
   }
 
@@ -124,10 +153,27 @@ export function WatchFace({ sensorData, lang, geometry, onGeometryChange, active
         ...geometry,
         dragOffsetX: clamped
       });
-    } else {
-      const targetScroll = -(clientX - geometry.dragStartX); // reverse scroll logic for picker view
+    } else if (systemState === 'Picker') {
+      // In Picker, dragging left/right scrolls the selector. If we exceed right scroll threshold, we exit.
+      const targetScroll = -(clientX - geometry.dragStartX);
       const maxScroll = (24 - 1) * 160;
-      setPickerScrollX(Math.max(0, Math.min(targetScroll, maxScroll)));
+      if (clientX - geometry.dragStartX > 150) {
+        // swipe right far enough to trigger back to launcher
+        onGeometryChange({
+          ...geometry,
+          dragOffsetX: clientX - geometry.dragStartX
+        });
+      } else {
+        setPickerScrollX(Math.max(0, Math.min(targetScroll, maxScroll)));
+      }
+    } else if (systemState === 'AppDrawer') {
+      // In App Drawer, swipe right exits back to Launcher
+      const offset = clientX - geometry.dragStartX;
+      const clamped = Math.max(0, Math.min(geometry.resolution, offset));
+      onGeometryChange({
+        ...geometry,
+        dragOffsetX: clamped
+      });
     }
   }
 
@@ -135,18 +181,27 @@ export function WatchFace({ sensorData, lang, geometry, onGeometryChange, active
     if (!geometry.isDragging || !onGeometryChange) return;
     
     if (systemState === 'Launcher') {
-      const halfRes = geometry.resolution * 0.3; // Threshold for entering picker
+      const threshold = geometry.resolution * 0.25; // 25% threshold
       
-      if (geometry.dragOffsetX < -halfRes) {
+      if (geometry.dragOffsetX > threshold) {
+        // Swiped right -> enters Watch Face Picker
         setSystemState('Picker');
         setPickerScrollX((Math.max(1, activeFaceId) - 1) * 160);
-        onGeometryChange({ ...geometry, isDragging: false, dragOffsetX: 0 });
-      } else {
-        // Return back to center
-        onGeometryChange({ ...geometry, isDragging: false, dragOffsetX: 0 });
+      } else if (geometry.dragOffsetX < -threshold) {
+        // Swiped left -> enters App Drawer
+        setSystemState('AppDrawer');
       }
-    } else {
-      onGeometryChange({ ...geometry, isDragging: false });
+      onGeometryChange({ ...geometry, isDragging: false, dragOffsetX: 0 });
+    } else if (systemState === 'Picker') {
+      if (geometry.dragOffsetX > geometry.resolution * 0.3) {
+        setSystemState('Launcher');
+      }
+      onGeometryChange({ ...geometry, isDragging: false, dragOffsetX: 0 });
+    } else if (systemState === 'AppDrawer') {
+      if (geometry.dragOffsetX > geometry.resolution * 0.3) {
+        setSystemState('Launcher');
+      }
+      onGeometryChange({ ...geometry, isDragging: false, dragOffsetX: 0 });
     }
   };
 
@@ -269,12 +324,12 @@ export function WatchFace({ sensorData, lang, geometry, onGeometryChange, active
 
           {/* Viewport 2: Watch Face Picker (pickerX offset) */}
           <div 
-            className="absolute top-0 left-0 w-full h-full flex items-center transition-transform duration-75"
+            className="absolute top-0 left-0 w-full h-full flex items-center transition-transform duration-75 select-none"
             style={{ 
               transform: `translateX(${pickerX}px)`,
               width: `${geometry.resolution}px`,
               height: `${geometry.resolution}px`,
-              backgroundColor: '#212124' // 0x2104 hex approximation for dark gray base
+              backgroundColor: '#1E232E' // 0x2104 hex approximation for dark gray base
             }}
           >
             {/* The internal scroll container for the 1-24 cards */}
@@ -285,24 +340,26 @@ export function WatchFace({ sensorData, lang, geometry, onGeometryChange, active
               {activeFacesArray.map((id) => {
                 // Dynamically build card appearance based on rust specs
                 let microColor = "bg-slate-600";
-                if (id === 1) microColor = "bg-blue-600"; // 0x001F
-                if (id === 2) microColor = "bg-red-600"; // 0xF800
-                if (id === 3) microColor = "bg-green-500"; // 0x07E0
-                if (id === 24) microColor = "bg-white"; // 0xFFFF
+                if (id === 1) microColor = "bg-blue-600 animate-pulse"; // 0x001F
+                if (id === 2) microColor = "bg-red-600 shadow-inner"; // 0xF800
+                if (id === 3) microColor = "bg-emerald-500 shadow-lg"; // 0x07E0
+                if (id === 24) microColor = "bg-white shadow"; // 0xFFFF
 
                 return (
                   <div 
                     key={id}
                     onClick={() => onCardClicked(id)}
-                    className="relative shrink-0 flex flex-col justify-center items-center shadow-md active:scale-95 transition-transform"
+                    className={`relative shrink-0 flex flex-col justify-center items-center rounded-2xl active:scale-95 transition-all cursor-pointer ${
+                      activeFaceId === id ? "border-2 border-emerald-500 ring-2 ring-emerald-500/20" : "border border-slate-700/50"
+                    }`}
                     style={{
                       width: 120, // card_width
                       height: geometry.resolution - 80, // trimmed top/bottom margins (40..geo.height-40)
                       marginRight: 40, // card_gap
-                      backgroundColor: '#1E232E'
+                      backgroundColor: '#11141C'
                     }}
                   >
-                    <div className={`w-8 h-8 rounded-full mb-3 ${microColor}`} />
+                    <div className={`w-8 h-8 rounded-full mb-3 flex items-center justify-center text-[10px] font-bold text-white shadow-md ${microColor}`} />
                     <span className="text-[10px] font-mono text-slate-300 font-bold mb-1">ID: {id}</span>
                     <span className="text-[8px] text-slate-500 leading-tight block text-center px-2">{t.pickerTitle}</span>
                   </div>
@@ -313,6 +370,96 @@ export function WatchFace({ sensorData, lang, geometry, onGeometryChange, active
             {/* Edge mask overlay to simulate physical resolution constraints */}
             <div className="absolute inset-0 pointer-events-none border border-slate-700/30" />
           </div>
+
+          {/* Viewport 3: App Drawer / Settings (drawerX offset) */}
+          <div 
+            className="absolute top-0 left-0 w-full h-full flex flex-col items-center justify-start py-6 transition-transform duration-75 text-white select-none"
+            style={{ 
+              transform: `translateX(${drawerX}px)`,
+              width: `${geometry.resolution}px`,
+              height: `${geometry.resolution}px`,
+              backgroundColor: '#0A0D14' // Deep sleek dark background
+            }}
+          >
+            {/* Rounded Bezel Top Header */}
+            <div className={`text-center font-bold tracking-tight text-slate-300 uppercase font-mono border-b border-slate-800/80 pb-2 w-full px-4 mb-2 flex items-center justify-center gap-1.5 ${isMini ? 'text-[9px]' : 'text-xs'}`}>
+              <Cpu className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+              <span>{t.activeDrawer}</span>
+            </div>
+
+            {/* Vertically scrollable list of apps */}
+            <div className={`flex-1 w-full overflow-y-auto px-3.5 flex flex-col gap-1.5 scrollbar-thin scrollbar-thumb-slate-800 pb-6 ${isMini ? "pt-1" : "pt-2"}`}>
+              
+              {/* App 1: Terminal */}
+              <div 
+                onClick={() => {
+                  showToast(lang === 'zh' ? '正在加载：系统终端内核...' : 'Loading: Systems Terminal Core...');
+                  setSystemState('Launcher');
+                }}
+                className={`flex items-center gap-2.5 bg-slate-900/75 hover:bg-slate-800 border border-slate-800/80 rounded-xl cursor-pointer active:scale-95 transition ${
+                  isMini ? 'p-1.5' : 'p-2'
+                }`}
+              >
+                <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
+                  <Terminal className="w-3.5 h-3.5" />
+                </div>
+                <div className="flex-1 min-w-0 text-left">
+                  <div className={`font-mono font-bold text-slate-200 truncate ${isMini ? 'text-[9px]' : 'text-[11px]'}`}>{t.app1Name}</div>
+                  <div className="text-[8px] text-slate-500 truncate">TTY /dev/ttyS0 live</div>
+                </div>
+                <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
+              </div>
+
+              {/* App 2: Static Memory */}
+              <div 
+                onClick={() => {
+                  showToast(lang === 'zh' ? '内存常驻机制评估：0 耗损 100% 正常' : 'Static pool evaluate: 0 leak, 100% stable');
+                  setSystemState('Launcher');
+                }}
+                className={`flex items-center gap-2.5 bg-slate-900/75 hover:bg-slate-800 border border-slate-800/80 rounded-xl cursor-pointer active:scale-95 transition ${
+                  isMini ? 'p-1.5' : 'p-2'
+                }`}
+              >
+                <div className="w-7 h-7 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 shrink-0">
+                  <History className="w-3.5 h-3.5" />
+                </div>
+                <div className="flex-1 min-w-0 text-left">
+                  <div className={`font-mono font-bold text-slate-200 truncate ${isMini ? 'text-[9px]' : 'text-[11px]'}`}>{t.app2Name}</div>
+                  <div className="text-[8px] text-slate-500 truncate">Slab Allocation Guard</div>
+                </div>
+                <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
+              </div>
+
+              {/* App 3: Sensory Zero-Copy Looper */}
+              <div 
+                onClick={() => {
+                  showToast(lang === 'zh' ? '零拷贝 ALooper 管道校准脉冲成功' : 'ALooper sensory pipeline calibrated');
+                  setSystemState('Launcher');
+                }}
+                className={`flex items-center gap-2.5 bg-slate-900/75 hover:bg-slate-800 border border-slate-800/80 rounded-xl cursor-pointer active:scale-95 transition ${
+                  isMini ? 'p-1.5' : 'p-2'
+                }`}
+              >
+                <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                  <Activity className="w-3.5 h-3.5" />
+                </div>
+                <div className="flex-1 min-w-0 text-left">
+                  <div className={`font-mono font-bold text-slate-200 truncate ${isMini ? 'text-[9px]' : 'text-[11px]'}`}>{t.app3Name}</div>
+                  <div className="text-[8px] text-slate-500 truncate">Direct JNI Sensor Pipe</div>
+                </div>
+                <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
+              </div>
+
+            </div>
+          </div>
+
+          {/* Premium In-Watch Micro Toast Notification Overlay */}
+          {toastMessage && (
+            <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-slate-900/95 border border-slate-800 shadow-2xl px-3 py-1.5 rounded-full text-center max-w-[85%] z-50 flex items-center gap-1.5 animate-in fade-in slide-in-from-bottom-4 duration-300">
+              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+              <span className="text-[9px] text-slate-200 font-mono font-bold leading-tight">{toastMessage}</span>
+            </div>
+          )}
 
         </div>
 
