@@ -24,7 +24,24 @@ export const translations = {
     memoryMode: "15MB 编译期静态池常驻限制",
     altitudeUnit: "米",
     uncompressedWarning: "背景材质采用按需分割 RGB565 解码流",
-    compileStatus: "NDK 编译兼容: API 23 (Android 6.0)"
+    compileStatus: "NDK 编译兼容: API 23 (Android 6.0)",
+    // New translations for 1.3.0
+    geometryTitle: "物理显示边界 (Compiled Rust Geometry)",
+    screenShape: "真机屏幕形态 (Screen Shape)",
+    squareShape: "精简方屏",
+    roundShape: "极限圆屏",
+    resolution: "物理分辨率 (Resolution)",
+    densityScale: "等比点阵放缩 (Density Scale)",
+    gestureTitle: "左滑交互状态机 (Touch State Machine)",
+    swipeProgress: "手势左滑进度 (Swipe Offset)",
+    dragActive: "正在拖拽视口",
+    dragIdle: "视口自由锁定",
+    activeDrawer: "已切入应用抽屉 (App Drawer)",
+    app1Name: "系统终端 (Terminal)",
+    app2Name: "静态内存池 (Pool)",
+    app3Name: "传感器零拷贝 (Looper)",
+    borderCheck: "编译期像素剪裁分析 (Rasterizer Loupe)",
+    borderCheckDesc: "使用 Rust `is_pixel_visible` 欧几里得距离核心，分析圆角物理屏边缘像素的过滤状态。"
   },
   en: {
     brandName: "ChronOxide Watch Face Engine",
@@ -49,6 +66,24 @@ export const translations = {
     memoryMode: "15MB Compile-Time Static Memory Pool Limit",
     altitudeUnit: "m",
     uncompressedWarning: "Background texture streamed via sub-chunk RGB565 decoder",
-    compileStatus: "NDK Target: API 23 (Android 6.0)"
+    compileStatus: "NDK Target: API 23 (Android 6.0)",
+    // New translations for 1.3.0
+    geometryTitle: "Physical Screen Bounds (Compiled Rust Geometry)",
+    screenShape: "Screen Shape",
+    squareShape: "Retro Square",
+    roundShape: "Ultra Round",
+    resolution: "Target Resolution",
+    densityScale: "Density Scale (Font Raster)",
+    gestureTitle: "Touch Viewport Offset (Touch FFI State)",
+    swipeProgress: "Swipe Left Progress",
+    dragActive: "Dragging Viewport",
+    dragIdle: "Viewport Locked",
+    activeDrawer: "Active Drawer Layer",
+    app1Name: "Sys Terminal",
+    app2Name: "Static Memory",
+    app3Name: "Zero-Copy Sensor",
+    borderCheck: "Rust Core Edge Loupe (Rasterizer Check)",
+    borderCheckDesc: "Evaluating pixel coordinates visibility matching Rust's `(dx*dx + dy*dy) <= r*r` boundary equation."
   }
 };
+
