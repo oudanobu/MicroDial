@@ -41,31 +41,22 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          # 编译目标设为 32位安卓。此处会由于当前演示环境没有完整的 Cargo.toml 失败
-          # 但这展示了真机环境下标准的 JNI 动态库编译过程
-          cargo ndk -t armv7-linux-androideabi -p 23 build --release || echo "Rust 编译在此预览中跳过"
+          cd rust_core
+          cargo ndk -t armv7-linux-androideabi -p 23 build --release
 
       - name: Package 32-bit APK
         run: |
           mkdir -p release-apk
           
-          # 标准打包：如果项目中有真实的 Android Gradle 壳子则自动编译
-          if [ -f "android/gradlew" ]; then
-            echo "Found Android Gradle Wrapper, building APK..."
-            cd android
-            chmod +x gradlew
-            ./gradlew assembleRelease
-            cp app/build/outputs/apk/release/*.apk ../release-apk/ChronOxide-v1.0.0-armeabi-v7a.apk
-          else
-            # 兼容性 Fallback：如果没有安卓壳，创建一个占位的 APK 并写入底层的 .so 共享库文件
-            echo "Gradle build shell not found. Creating a payload APK containing the 32-bit .so file."
-            mkdir -p raw_apk/lib/armeabi-v7a/
-            cp target/armv7-linux-androideabi/release/libchronoxide.so raw_apk/lib/armeabi-v7a/ 2>/dev/null || true
-            cd raw_apk
-            # 建立一个占位符文件代表生成的 32位 APK 
-            echo "Mock APK payload" > mock.dex
-            zip -r ../release-apk/ChronOxide-v1.0.0-armeabi-v7a.apk ./*
-          fi
+          # Copy the built .so to the Android jniLibs folder
+          mkdir -p android/app/src/main/jniLibs/armeabi-v7a/
+          cp rust_core/target/armv7-linux-androideabi/release/libchronoxide.so android/app/src/main/jniLibs/armeabi-v7a/
+          
+          echo "Building APK via Gradle..."
+          cd android
+          gradle assembleRelease
+          
+          cp app/build/outputs/apk/release/*.apk ../release-apk/ChronOxide-v1.0.0-armeabi-v7a.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
